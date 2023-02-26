@@ -6,6 +6,7 @@ require("company.nut");
 require("subsidies.nut")
 require("story.nut");
 require("strings.nut");
+require("generation_cargo.nut");
 
 // Import SuperLib for GameScript
 import("util.superlib", "SuperLib", 40);
@@ -107,6 +108,15 @@ function MainClass::Start()
     Log.Info("Setup took " + setup_duration + " ticks.", Log.LVL_DEBUG);
     Log.Info("Happy playing !", Log.LVL_INFO);
 
+    // Extended: Peaks and Troughs
+    local control_generation_cargo = "GetHour" in GSDate;
+    local generation_cargo = null;
+    if (control_generation_cargo) {
+        Log.Info("Extended: JGRPP detected", Log.LVL_INFO);
+        Log.Info("Extended: Town Cargo Generation Control (Peaks and Troughs)", Log.LVL_INFO);
+        generation_cargo = GenerationCargo();
+    }
+
     // Wait for the game to start
     GSController.Sleep(1);
 
@@ -142,6 +152,11 @@ function MainClass::Start()
 
         this.HandleEvents();
         this.ManageTowns();
+
+        // Extended
+        if (control_generation_cargo) {
+            generation_cargo.Manage();
+        }
     }
 }
 

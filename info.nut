@@ -255,7 +255,26 @@ class MainClass extends GSInfo
                 hard_value = 1,
                 custom_value = 1,
                 flags = CONFIG_INGAME, min_value = 1, max_value = 3 });
-        AddLabels("log_level", { _1 = "1: Info", _2 = "2: Cargo", _3 = "3: Debug" });
+        AddLabels("log_level", { _1 = "1: Info", _2 = "2: Cargo/Verbose", _3 = "3: Debug" });
+
+        AddSetting({
+            name = "passenger_preset",
+            description = "Passenger Preset", easy_value = 2, medium_value = 2, hard_value = 2, custom_value = 2,
+            flags = CONFIG_INGAME,
+            min_value = 1, max_value = 3});
+        AddLabels("passenger_preset", {_1 = "Hyperpeak", _2 = "Equal peaks", _3 = "Japan" } );
+
+        AddSetting({
+            name = "town_cargo_generation_base",
+            description = "Town Cargo Generation Base (1900)", easy_value = 10, medium_value = 10, hard_value = 10, custom_value = 10,
+            flags = CONFIG_INGAME,
+            min_value = -60, max_value = 20});
+
+        AddSetting({
+            name = "industry_cargo_generation_base",
+            description = "Town Cargo Generation Base (1900)", easy_value = 0, medium_value = 0, hard_value = 0, custom_value = 0,
+            flags = CONFIG_INGAME,
+            min_value = -10, max_value = 10});
     }
 }
 
