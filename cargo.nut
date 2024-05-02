@@ -48,12 +48,14 @@ enum Economies
     FIRS4__STEELTOWN, // 4.3.0
     FIRS4__IN_A_HOT_COUNTRY, // 4.3.0
     XIS__THE_LOT, // 0.6
-    OTIS, // 03
+    OTIS, // 05
     IOTC, // 0.1.4
     LUMBERJACK, // 0.1.0
     WRBI, // 1200
     ITI2, // 2.0
     REAL, // Real Industries Beta
+    MINIMALIST, // 1.1
+    PIRS, // PIRS 2022
     END,
 }
 
@@ -213,16 +215,20 @@ function GetEconomyCargoList(economy, cargo_list) {
                 "PHOS","IRON","PIPE","FICR","PORE","QLME","RCYC","RUBR","SALT","SAND",
                 "SCMT","SLAG","SASH","STEL","SGBT","SULP","VBOD","VPTS","VEHI","WOOD",
                 "WOOL","ZINC"];
-    case(Economies.OTIS): // OTIS 03
+    case(Economies.OTIS): // OTIS 05
         local list = ["PASS","COAL","MAIL","OIL_","LIME","GOOD","GRAI","WOOD","IORE","STEL",
                       "MILK","FOOD","PAPR","FISH","WOOL","CLAY","SAND","WDPR","PCL_","GRVL",
-                      "FRUT","BDMT","BEER","MAIZ","CMNT","GLAS","LVST","PETR","FRVG","SASH",
-                      "OTI1","CORE","SCMT","COPR","URAN","VALU","AORE","OTI2","NICK","SULP",
+                      "FRUT","BDMT","BEER","MAIZ","CMNT","GLAS","LVST","PETR","FRVG","FICR",
+                      "OTI1","CORE","SCMT","COPR","URAN","VALU","AORE","OTI2","NKOR","SULP",
                       "RUBR","VEHI","BAKE","PIPE","OYST","MEAT","CHSE","FURN","TEXT","SEED",
                       "FERT","BOOM","ACID","CHLO","SLAG","TWOD","SESP","FUEL","ELTR","WATR",
                       "TATO","POWR","MPTS","RFPR"];
         if (60 < cargo_list.len() && cargo_list[60] == "POTA")
             list[60] = "POTA";
+        if (38 < cargo_list.len() && cargo_list[38] == "NICK")
+            list[38] = "NICK";
+        if (29 < cargo_list.len() && cargo_list[29] == "SASH")
+            list[29] = "SASH";
         return list;
 
     case(Economies.IOTC): // IOTC 0.1.4
@@ -250,6 +256,12 @@ function GetEconomyCargoList(economy, cargo_list) {
                 "WOOD","MAIZ","WDPR","WORK","STUD","OTI2","TRSH","VEHI","PRIS","FOOD",
                 "PASS","PETR","RUBR","PLAS","TYRE","HVEH"];
 
+    case(Economies.MINIMALIST): // Minimalist Industries
+        return ["PASS", null,"MAIL", null, null,"GOOD"];
+
+    case(Economies.PIRS): // PIRS 2022
+        return ["PASS","COAL","MAIL","OIL_","FISH","GOOD","GRAI","WOOD","IORE","STEL","WDPR",
+                "FOOD","FRUT","ENSP","FMSP","RFPR","PETR"];
     default:
         return [];
     }
@@ -266,7 +278,7 @@ function ConstructECSVectorCargoList(cargo_list) {
     local town_list = ["PASS","MAIL","GOOD","GOLD","WATR","TOUR"];
     local town_idx = [0,2,5,10,27,31];
     foreach (index, id in town_idx) {
-        if (cargo_list[id] != town_list[index]) {
+        if (town_idx[index] >= cargo_list.len() || cargo_list[id] != town_list[index]) {
             town = false;
             break;
         }
@@ -633,8 +645,8 @@ function DefineCargosBySettings(economy)
             ::CargoCat <- [[0,2],
                        [8,11,14],
                        [1,7,10,17,18],
-                       [3,4,9,13,15,16],
-                       [6,8,12,16]];
+                       [3,4,9,13,15],
+                       [5,6,12,16]];
             ::CargoCatList <- [CatLabels.PUBLIC_SERVICES,CatLabels.RAW_FOOD,CatLabels.RAW_MATERIALS,
                        CatLabels.PROCESSED_MATERIALS,CatLabels.FINAL_PRODUCTS];
             ::CargoMinPopDemand <- [0,500,1000,4000,8000];
@@ -866,6 +878,26 @@ function DefineCargosBySettings(economy)
             ::CargoMinPopDemand <- [0,1000,2000,3000,4000];
             ::CargoPermille <- [60,45,35,15,15];
             ::CargoDecay <- [0.5,0.4,0.3,0.1,0.1];
+            break;
+        case(Economies.MINIMALIST): // Minimalist Industries 1.1
+            ::CargoLimiter <- [0,2];
+            ::CargoCat <- [[0,2],
+                       [5]];
+            ::CargoCatList <- [CatLabels.PUBLIC_SERVICES,CatLabels.PRODUCTS];
+            ::CargoMinPopDemand <- [0,500];
+            ::CargoPermille <- [60,45];
+            ::CargoDecay <- [0.4,0.4];
+            break;
+        case(Economies.PIRS): // PIRS 2022
+            ::CargoLimiter <- [0,2];
+            ::CargoCat <- [[0,2],
+                       [1,3,4,6,7,8,12],
+                       [9,10,13,14,15,16],
+                       [5,11]];
+            ::CargoCatList <- [CatLabels.PUBLIC_SERVICES,CatLabels.RAW_MATERIALS,CatLabels.PROCESSED_MATERIALS,CatLabels.FINAL_PRODUCTS];
+            ::CargoMinPopDemand <- [0,500,1500,4000];
+            ::CargoPermille <- [60,35,25,15];
+            ::CargoDecay <- [0.4,0.3,0.2,0.1];
             break;
         default:
             if (!CreateDefaultCargoCat())
