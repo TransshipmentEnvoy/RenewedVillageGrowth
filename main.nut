@@ -167,6 +167,7 @@ function MainClass::Init()
     // Check game settings
     GSGameSettings.SetValue("economy.town_growth_rate", 2);
     GSGameSettings.SetValue("economy.fund_buildings", 0);
+    ::SettingsTable.wallclock_timekeeping <- GSGameSettings.GetValue("economy.timekeeping_units");
 
     if (!this.load_saved_data) { // Disallow changing these in a running game
         ::SettingsTable.use_town_sign <- GSController.GetSetting("use_town_sign");
@@ -211,6 +212,7 @@ function MainClass::Init()
     this.towns = this.CreateTownList();
     if (this.towns.len() > SELF_MAX_TOWNS)
         return InitError.TOWN_NUMBER;
+    Log.Info("Setup " + this.towns.len() + " towns", Log.LVL_INFO);
 
     // Run industry stabilizer
     Log.Info("Prospecting raw industries ... (can take a while on large maps)", Log.LVL_INFO);
