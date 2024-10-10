@@ -28,6 +28,7 @@ function GenerationCargo::GetPassengerTimeRates()
         case 1:
             Log.Info("Extended: Preset: Hyper peak", Log.LVL_INFO);
             this.time_rates = [-1.69, -2.80, -5.32, -5.32, -5.32, -2.42, -0.97, 0.00, 1.70, 0.64, 0.15, 0.00, 0.00, 0.00, 0.00, 0.20, 0.68, 1.14, 1.32, 1.14, 0.38, 0.00, -1.00, -1.30];
+            // this.time_rates = [0.30, 0.14, 0.02, 0.02, 0.02, 0.18, 0.49, 0.96, 3.12, 1.50, 1.06, 0.96, 0.96, 0.96, 0.96, 1.1, 1.54, 2.12, 2.4, 2.12, 1.25, 0.96, 0.48, 0.39];
             break;
         case 2:
             Log.Info("Extended: Preset: Equal peaks", Log.LVL_INFO);
@@ -68,7 +69,10 @@ function GenerationCargo::Manage()
     if (diff_hour != 0) {
         Log.Info("Extended: Starting Hourly Updates...", Log.LVL_DEBUG);
 
-        local base_rate = (year - 1900 - 4) / 5 + this.base_1900;
+        /* TODO: add base rate profile */
+        /* TODO: prod_rate change to new settings */
+        // local base_rate = (year - 1900 - 4) / 10 + this.base_1900;
+        local base_rate = this.base_1900;
         local prod_rate = this.time_rates[hour] * 10 + base_rate;
 
         if (prod_rate > 80) {
@@ -87,7 +91,8 @@ function GenerationCargo::Manage()
     if (diff_year != 0) {
         Log.Info("Extended: Starting Yearly Updates...", Log.LVL_DEBUG);
 
-        local ind_rate = (year - 1900 - 4) / 5 + this.ind_base_1900;
+        // local ind_rate = (year - 1900 - 4) / 10 + this.ind_base_1900;
+        local ind_rate = this.ind_base_1900
         if (ind_rate > 40) {
             ind_rate = 40;
         }

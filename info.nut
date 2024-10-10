@@ -294,6 +294,15 @@ class MainClass extends GSInfo
             description = "Industry Cargo Generation Base (1900)", easy_value = 0, medium_value = 0, hard_value = 0, custom_value = 0,
             flags = CONFIG_INGAME,
             min_value = -10, max_value = 10});
+
+        AddSetting({
+            name = "tech_advance_control",
+            description = "Tech Advance Control",
+            easy_value = 1,
+            medium_value = 1,
+            hard_value = 1,
+            custom_value = 1,
+            flags = CONFIG_BOOLEAN });
     }
 }
 

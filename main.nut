@@ -7,6 +7,7 @@ require("subsidies.nut")
 require("story.nut");
 require("strings.nut");
 require("generation_cargo.nut");
+require("tech_advance.nut");
 
 // Import SuperLib for GameScript
 import("util.superlib", "SuperLib", 40);
@@ -14,7 +15,8 @@ Log <- SuperLib.Log;
 Helper <- SuperLib.Helper;
 
 // Import ToyLib
-import("Library.GSToyLib", "GSToyLib", 1);
+// import("Library.GSToyLib", "GSToyLib", 1);
+require("dep/GSToyLib/main.nut")
 import("Library.SCPLib", "SCPLib", 45);
 
 enum Randomization {
@@ -58,6 +60,9 @@ class MainClass extends GSController
     toy_lib = null;
     story_editor = null;
 
+    generation_cargo = null;
+    tech_advance = null;
+
     constructor() {
         this.companies = [];
         this.towns = [];
@@ -74,6 +79,10 @@ class MainClass extends GSController
         ::TownDataTable <- {};
         ::CompanyDataTable <- {};
         ::SettingsTable <- {};
+
+        // extended
+        this.generation_cargo = null;
+        this.tech_advance = null;
     }
 }
 
@@ -101,21 +110,28 @@ function MainClass::Start()
     GSGame.Pause();
     Log.Info("Script initialisation...", Log.LVL_INFO);
     local init_error = this.Init();
+
+    // Extended: Peaks and Troughs
+    local control_generation_cargo = "GetHour" in GSDate;
+    if (control_generation_cargo) {
+        Log.Info("Extended: JGRPP detected", Log.LVL_INFO);
+        Log.Info("Extended: Town Cargo Generation Control (Peaks and Troughs)", Log.LVL_INFO);
+        this.generation_cargo = GenerationCargo();
+    }
+
+    // Extended: Tech Advancement
+    local control_tech_advance = GSController.GetSetting("tech_advance_control");;
+    if (control_tech_advance) {
+        Log.Info("Extended: JGRPP detected", Log.LVL_INFO);
+        Log.Info("Extended: Tech Advancement Control", Log.LVL_INFO);
+        this.tech_advance = TechAdvance();
+    }
     GSGame.Unpause();
 
     local setup_duration = GSController.GetTick() - start_tick;
     Log.Info("Game setup done.", Log.LVL_INFO);
     Log.Info("Setup took " + setup_duration + " ticks.", Log.LVL_DEBUG);
     Log.Info("Happy playing !", Log.LVL_INFO);
-
-    // Extended: Peaks and Troughs
-    local control_generation_cargo = "GetHour" in GSDate;
-    local generation_cargo = null;
-    if (control_generation_cargo) {
-        Log.Info("Extended: JGRPP detected", Log.LVL_INFO);
-        Log.Info("Extended: Town Cargo Generation Control (Peaks and Troughs)", Log.LVL_INFO);
-        generation_cargo = GenerationCargo();
-    }
 
     // Wait for the game to start
     GSController.Sleep(1);
@@ -130,6 +146,7 @@ function MainClass::Start()
     }
 
     // Main loop
+    GSToyLib.Check();
     local past_system_time = GSDate.GetSystemTime();
     while (true) {
         local town_info_mode = GSController.GetSetting("town_info_mode");
@@ -150,12 +167,23 @@ function MainClass::Start()
             }
         }
 
+        // handle events
         this.HandleEvents();
-        this.ManageTowns();
 
+        // check communication
+        if (GSDate.GetCurrentDate() - this.current_date != 0) {
+            //Log.Info("" + (GSDate.GetCurrentDate() - this.current_date), Log.LVL_INFO);
+            GSToyLib.Check();
+        }
+
+        // management
+        this.ManageTowns();
         // Extended
-        if (control_generation_cargo) {
+        if (this.generation_cargo != null) {
             generation_cargo.Manage();
+        }
+        if (this.tech_advance != null) {
+            tech_advance.Manage();
         }
     }
 }
@@ -163,6 +191,7 @@ function MainClass::Start()
 function MainClass::Init()
 {
     this.toy_lib = GSToyLib(null); // Init ToyLib;
+    GSToyLib.LibPrintMessage(true);
 
     // Check game settings
     GSGameSettings.SetValue("economy.town_growth_rate", 2);
@@ -247,6 +276,8 @@ function MainClass::HandleEvents()
         case GSEvent.ET_COMPANY_MERGER:
             Log.Info("A company was created/bankrupt/merged => update company list", Log.LVL_INFO);
             this.UpdateCompanyList();
+            if (this.tech_advance != null)
+                this.tech_advance.UpdateCompanyList();
             break;
 
         default: break;
@@ -467,7 +498,6 @@ function MainClass::ManageTowns()
     if (diff_date == 0) {
         return;
     } else {
-        GSToyLib.Check();
         this.story_editor.CheckParameters(this.companies);
         DailyManageTownPopulation();
 
