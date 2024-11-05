@@ -25,7 +25,7 @@ class GSToyLib {
     static CompanyMoneyList = GSList(); /**< List of companies that have ask us money */
     static CompanyExemptionList = GSList(); /**< List of companies that have ask us exemption */
 
-    constructor(scp_handle) {
+    constructor(scp_handle, gs_instance) {
         if (scp_handle == null) {
             /**<  We will handle SCP ourselves if the main script don't use scp */
             scp_handle = SCPLib(GSTOYLIB_SHORTNAME, GSTOYLIB_VERSION, null);
@@ -152,7 +152,7 @@ function GSToyLib::AskExemption(message, self) {
     }
     local company = GSCompany.GetName(message.SenderID)+" (#"+message.SenderID+")";
     if (GSToyLib.State.info_output) {
-        GSLog.Info("GSToyLib> Company " + company + "Receiving ..." + message.Data[0]);
+        GSLog.Info("GSToyLib> Company " + company + "Receiving Exemption Request: " + message.Data[0]);
     }
     GSToyLib.State.scp_handle.Answer(message, 0);
 }

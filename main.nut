@@ -190,7 +190,8 @@ function MainClass::Start()
 
 function MainClass::Init()
 {
-    this.toy_lib = GSToyLib(null); // Init ToyLib;
+    this.toy_lib = GSToyLib(null, this); // Init ToyLib;
+    this.toy_lib.SCPConfigChange(false, false, true);
     GSToyLib.LibPrintMessage(true);
 
     // Check game settings
