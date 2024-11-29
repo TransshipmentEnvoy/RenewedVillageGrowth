@@ -3,7 +3,6 @@ Log <- SuperLib.Log;
 
 class GenerationCargo {
     base_1900 = null;
-    ind_base_1900 = null;
     time_rates = null;
 
     // trace current hour
@@ -12,7 +11,6 @@ class GenerationCargo {
 
     constructor(){
         this.base_1900 = GSController.GetSetting("town_cargo_generation_base");
-        this.ind_base_1900 = GSController.GetSetting("industry_cargo_generation_base");
         this.GetPassengerTimeRates();
 
         this.current_hour = this.GetHourSafe();
@@ -90,17 +88,6 @@ function GenerationCargo::Manage()
     local diff_year = year - this.current_year;
     if (diff_year != 0) {
         Log.Info("Extended: Starting Yearly Updates...", Log.LVL_DEBUG);
-
-        // local ind_rate = (year - 1900 - 4) / 10 + this.ind_base_1900;
-        local ind_rate = this.ind_base_1900
-        if (ind_rate > 40) {
-            ind_rate = 40;
-        }
-        if (ind_rate < -40) {
-            ind_rate = -40;
-        }
-        Log.Info("Extended: Industry Cargo Prod Rate: " + ind_rate, Log.LVL_DEBUG);
-        GSGameSettings.SetValue("economy.industry_cargo_scale_factor", ind_rate.tointeger());
 
         this.current_year = year;
     }

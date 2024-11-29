@@ -284,15 +284,9 @@ class MainClass extends GSInfo
 
         AddSetting({
             name = "town_cargo_generation_base",
-            description = "Town Cargo Generation Base (1900)", easy_value = 10, medium_value = 10, hard_value = 10, custom_value = 10,
+            description = "Town Cargo Generation Base", easy_value = 0, medium_value = 0, hard_value = 0, custom_value = 0,
             flags = CONFIG_INGAME,
-            min_value = -60, max_value = 20});
-
-        AddSetting({
-            name = "industry_cargo_generation_base",
-            description = "Industry Cargo Generation Base (1900)", easy_value = 0, medium_value = 0, hard_value = 0, custom_value = 0,
-            flags = CONFIG_INGAME,
-            min_value = -10, max_value = 10});
+            min_value = -80, max_value = 80});
 
         AddSetting({
             name = "tech_advance_control",
