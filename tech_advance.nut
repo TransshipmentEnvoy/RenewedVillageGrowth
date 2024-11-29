@@ -5,7 +5,7 @@ class TechAdvance {
     
     constructor(){
         GSGameSettings.SetValue("vehicle.never_expire_vehicles", 1);
-        GSGameSettings.SetValue("vehicle.no_introduce_vehicles_after", 1);
+        GSGameSettings.SetValue("vehicle.no_introduce_vehicles_after", 0);
 
         // load info of all vehicles
     }
