@@ -18,5 +18,5 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  */
-GSTOYLIB_SHORTNAME <- "GSTL";
-GSTOYLIB_VERSION <- 1;
+GSTOYLIB_SHORTNAME <- "TLGX";
+GSTOYLIB_VERSION <- 2;

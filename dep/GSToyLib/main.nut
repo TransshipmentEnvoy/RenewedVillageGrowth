@@ -40,8 +40,8 @@ class GSToyLib {
         }
         scp_handle.SetEventHandling(true); /**< force events on, we don't know if the script that host us handle them or not.*/
         scp_handle.SCPLogging_Error(true);
-        scp_handle.AddCommand("MoneyPlease", "GSToyLib Set v1", this, GSToyLib.ToyAskMoney);
-        scp_handle.AddCommand("Exemption", "GSToyLib Set v1", this, GSToyLib.AskExemption);
+        scp_handle.AddCommand("MoneyPlease", "GSToyLib Set v" + GSTOYLIB_VERSION, this, GSToyLib.ToyAskMoney);
+        scp_handle.AddCommand("Exemption", "GSToyLib Set v" + GSTOYLIB_VERSION, this, GSToyLib.AskExemption);
         GSToyLib.State.info_output = false;
         GSToyLib.State.give_money = true;
     }
@@ -116,6 +116,28 @@ function GSToyLib::IsToyAI(companyID)
     return (GSToyLib.CompanyMoneyList.GetValue(companyID) != 0);
 }
 
+function GSToyLib::IsExemptedAI(companyID)
+/**
+ * Test if a company has requested exemption. This allows the GS to identify AI companies
+ * that have been exempted from certain game rules without receiving money.
+ * @param companyID the id of the company you want test.
+ * @return true if the company has requested exemption at least one time.
+ */
+{
+    return (GSToyLib.CompanyExemptionList.GetValue(companyID) != 0);
+}
+
+function GSToyLib::IsAI(companyID)
+/**
+ * Test if a company has been treated as an AI by this library, either by receiving
+ * money or by requesting exemption. This is a combined check of IsToyAI and IsExemptedAI.
+ * @param companyID the id of the company you want test.
+ * @return true if the company got money from us OR has requested exemption.
+ */
+{
+    return (GSToyLib.CompanyMoneyList.GetValue(companyID) != 0 || GSToyLib.CompanyExemptionList.GetValue(companyID) != 0);
+}
+
 function GSToyLib::ToyAskMoney(message, self)
 /**
  * That's how the lib handle money query, nothing more than a "classic" SCP typeof message (see http://wiki.openttd.org/SCPLib_doc#Message if your are curious)
@@ -154,5 +176,7 @@ function GSToyLib::AskExemption(message, self) {
     if (GSToyLib.State.info_output) {
         GSLog.Info("GSToyLib> Company " + company + "Receiving Exemption Request: " + message.Data[0]);
     }
+    // Record that this company requested exemption
+    GSToyLib.CompanyExemptionList.SetValue(message.SenderID, 1);
     GSToyLib.State.scp_handle.Answer(message, 0);
 }

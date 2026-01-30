@@ -2,3 +2,7 @@
 *.tar
 slnx.sqlite
 .suo
+
+.github/copilot*
+/CLAUDE.md
+/AGENTS.md
