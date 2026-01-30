@@ -17,6 +17,8 @@ class Company
     global_goal = null;     // global goal showing achieved points in the goal gui
     sp_welcome = null;      // story page welcome
 
+    is_exempted = null;     // whether company requested exemption from GSToyLib
+
     constructor(id, load_data)
     {
         this.id = id;
@@ -25,12 +27,28 @@ class Company
         {
             this.points = 0;
             this.InitGUIGoals();
+
+            // Check if this company has requested exemption from GSToyLib
+            this.is_exempted = GSToyLib.IsExemptedAI(id);
+            if (this.is_exempted) {
+                Log.Info("Company " + GSCompany.GetName(id) + " (#" + id + ") detected as exempted", Log.LVL_INFO);
+            }
         }
         else
         {
             this.points = ::CompanyDataTable[this.id].points;
             this.global_goal = ::CompanyDataTable[this.id].global_goal;
             this.statistics = ::CompanyDataTable[this.id].statistics;
+
+            // Load exemption status with backward compatibility
+            if (::CompanyDataTable[this.id].rawin("is_exempted")) {
+                this.is_exempted = ::CompanyDataTable[this.id].is_exempted;
+                Log.Info("Loaded company " + GSCompany.GetName(id) + " (#" + id + ") exemption status: " + this.is_exempted, Log.LVL_INFO);
+            } else {
+                // Backward compatibility: re-detect from GSToyLib
+                this.is_exempted = GSToyLib.IsExemptedAI(id);
+                Log.Info("No saved exemption data for company " + GSCompany.GetName(id) + " (#" + id + "), re-detected from GSToyLib: " + this.is_exempted, Log.LVL_INFO);
+            }
         }
     }
 }
@@ -41,6 +59,8 @@ function Company::SavingCompanyData()
     company_data.points <- this.points;
     company_data.global_goal <- this.global_goal;
     company_data.statistics <- this.statistics;
+
+    company_data.is_exempted <- this.is_exempted;
 
     return company_data;
 }
@@ -218,4 +238,12 @@ function GetColorText(company_id)
         default:
             return GSText(GSText.STR_SILVER);
     }
+}
+
+function Company::SetExempted(exempted)
+{
+    if (!this.is_exempted && exempted) {
+        Log.Info("Company " + GSCompany.GetName(this.id) + " (#" + this.id + ") exemption status updated to: " + exempted, Log.LVL_INFO);
+    }
+    this.is_exempted = exempted;
 }

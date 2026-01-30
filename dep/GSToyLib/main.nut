@@ -21,7 +21,7 @@
 
 require("version.nut");
 class GSToyLib {
-    static State = { scp_handle = null, alone = true, give_money = true, info_output = false }; /**< scp_handle store the script given handle for scp or the one we use if none was given, alone is set to true when the script didn't gave us its scp_handle (so null), give_money enable/disable the lib to give money to AIs, info_output enable/disable outputing of message from the lib itself */
+    static State = { scp_handle = null, alone = true, give_money = true, info_output = false, gs_instance = null }; /**< scp_handle store the script given handle for scp or the one we use if none was given, alone is set to true when the script didn't gave us its scp_handle (so null), give_money enable/disable the lib to give money to AIs, info_output enable/disable outputing of message from the lib itself, gs_instance stores the GameScript instance for callbacks */
     static CompanyMoneyList = GSList(); /**< List of companies that have ask us money */
     static CompanyExemptionList = GSList(); /**< List of companies that have ask us exemption */
 
@@ -34,6 +34,7 @@ class GSToyLib {
             GSToyLib.State.alone = false;
         }
         GSToyLib.State.scp_handle = scp_handle;
+        GSToyLib.State.gs_instance = gs_instance;
         for (local i=0; i < 15; i++) { 
             GSToyLib.CompanyMoneyList.AddItem(i, 0);
             GSToyLib.CompanyExemptionList.AddItem(i, 0);
@@ -178,5 +179,11 @@ function GSToyLib::AskExemption(message, self) {
     }
     // Record that this company requested exemption
     GSToyLib.CompanyExemptionList.SetValue(message.SenderID, 1);
+    
+    // Notify GameScript to update Company object
+    if (GSToyLib.State.gs_instance != null) {
+        GSToyLib.State.gs_instance.OnCompanyExemptionRequested(message.SenderID);
+    }
+    
     GSToyLib.State.scp_handle.Answer(message, 0);
 }

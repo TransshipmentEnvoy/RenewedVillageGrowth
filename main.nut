@@ -398,6 +398,19 @@ function MainClass::CreateCompanyList()
         {
             this.companies.append(Company(company_id, true));
         }
+
+        // Restore exemption status to GSToyLib after loading
+        local exempted_count = 0;
+        foreach (company in this.companies) {
+            if (company.is_exempted) {
+                GSToyLib.CompanyExemptionList.SetValue(company.id, 1);
+                Log.Info("Restored exemption status to GSToyLib for company " + GSCompany.GetName(company.id) + " (#" + company.id + ")", Log.LVL_INFO);
+                exempted_count++;
+            }
+        }
+        if (exempted_count > 0) {
+            Log.Info("Restored exemption status for " + exempted_count + " exempted companies", Log.LVL_INFO);
+        }
     }
 
     // Now we can free ::CompanyDataTable
@@ -407,6 +420,20 @@ function MainClass::CreateCompanyList()
     this.UpdateCompanyList();
 
     return companies;
+}
+
+function MainClass::OnCompanyExemptionRequested(company_id)
+{
+    // Find the company in our list and update its exemption status
+    foreach (company in this.companies) {
+        if (company.id == company_id) {
+            company.SetExempted(true);
+            return;
+        }
+    }
+    
+    // If company not found in list (shouldn't happen, but log it)
+    Log.Warning("Exemption requested for unknown company #" + company_id, Log.LVL_INFO);
 }
 
 /* Make a squirrel array of GoalTown instances (towns_array). For each
