@@ -158,6 +158,21 @@ STR_ETERNAL_LOVE_OUTSTANDING    :outstanding
 STR_ETERNAL_LOVE_GOOD           :good
 STR_ETERNAL_LOVE_POOR           :poor
 
+##### TECHNOLOGY TREE #####
+STR_TECH_TREE_TITLE             :Technology Tree
+STR_TECH_HEADER                 :Research new vehicle technologies by paying £{NUM}k per vehicle. Click the Research button to unlock a vehicle type.
+STR_TECH_EXEMPT_MESSAGE         :Your company is exempt from vehicle restrictions. All vehicles are available without research.
+STR_TECH_RESEARCHING_HEADER     :{ORANGE}Currently Researching:{BLACK}
+STR_TECH_RESEARCHING_ITEM       :  • {RAW_STRING} - {NUM}% complete
+STR_TECH_TYPE_RAIL              :{LTBLUE}Railways:{BLACK} {NUM}/{NUM} unlocked
+STR_TECH_TYPE_ROAD              :{ORANGE}Road Vehicles:{BLACK} {NUM}/{NUM} unlocked
+STR_TECH_TYPE_WATER             :{BLUE}Ships:{BLACK} {NUM}/{NUM} unlocked
+STR_TECH_TYPE_AIR               :{YELLOW}Aircraft:{BLACK} {NUM}/{NUM} unlocked
+STR_TECH_ENGINE_ITEM            :  • {RAW_STRING}
+STR_TECH_BUTTON_RESEARCH        :Research (£{NUM}k)
+STR_TECH_MORE_AVAILABLE         :  ... and {NUM} more available
+STR_TECH_NO_AVAILABLE           :No new vehicles available for research. Check back later as new technologies are introduced.
+
 ##### UTILITY #####
 STR_COMMA                       :{SILVER}{COMMA}{ORANGE}
 STR_NUM                         :{SILVER}{NUM}{ORANGE}

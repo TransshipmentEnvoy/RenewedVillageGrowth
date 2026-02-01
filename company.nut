@@ -16,6 +16,7 @@ class Company
     statistics = null;      // contains texts for statistics in goal gui
     global_goal = null;     // global goal showing achieved points in the goal gui
     sp_welcome = null;      // story page welcome
+    sp_tech = null;         // story page for technology tree
 
     is_exempted = null;     // whether company requested exemption from GSToyLib
 

@@ -102,7 +102,7 @@ function MainClass::Start()
         if (! GSGameSettings.GetValue("town_growth_rate") ) {
             GSLog.Error("You must set town growth in advanced setting to something other than None. This script is now exiting!");
             this.story_editor = StoryEditor();
-            this.story_editor.CreateStoryBook([], 0, InitError.TOWN_GROWTH_RATE);
+            this.story_editor.CreateStoryBook([], 0, InitError.TOWN_GROWTH_RATE, null);
             return;
         }
     }
@@ -138,11 +138,19 @@ function MainClass::Start()
 
     // Create and fill StoryBook. This can't be done before OTTD is ready.
     this.story_editor = StoryEditor();
-    this.story_editor.CreateStoryBook(this.companies, this.towns.len(), init_error);
+    this.story_editor.CreateStoryBook(this.companies, this.towns.len(), init_error, this.tech_advance);
 
     if (!this.gs_init_done) {
         GSLog.Error("Game initialisation failed. This script is now exiting!");
         return;
+    }
+    
+    // Initialize tech pages if tech_advance is enabled
+    if (this.tech_advance != null && init_error == InitError.NONE) {
+        Log.Info("Initializing technology pages for all companies...", Log.LVL_INFO);
+        foreach (company in this.companies) {
+            this.story_editor.UpdateTechPage(company, this.tech_advance);
+        }
     }
 
     // Main loop
@@ -281,6 +289,35 @@ function MainClass::HandleEvents()
                 this.tech_advance.UpdateCompanyList();
             break;
 
+        case GSEvent.ET_STORYPAGE_BUTTON_CLICK:
+            event = GSEventStoryPageButtonClick.Convert(event);
+            local story_page_id = event.GetStoryPageID();
+            local element_id = event.GetElementID();
+            local company_id = event.GetCompanyID();
+            
+            // Check if this is a tech tree button (element_id maps to engine_id)
+            if (this.tech_advance != null && this.tech_advance.button_element_map.rawin(element_id)) {
+                local success = this.tech_advance.HandleUnlockButton(company_id, element_id);
+                
+                // Update tech page to reflect changes
+                local company = null;
+                foreach (c in this.companies) {
+                    if (c.id == company_id) {
+                        company = c;
+                        break;
+                    }
+                }
+                
+                if (company != null) {
+                    this.story_editor.UpdateTechPage(company, this.tech_advance);
+                    
+                    if (success) {
+                        Log.Info("Company " + company_id + " started research via button click", Log.LVL_INFO);
+                    }
+                }
+            }
+            break;
+
         default: break;
         }
     }
@@ -320,6 +357,11 @@ function MainClass::Save()
         Log.Info("Opcodes per saved town = " + ((start_opcodes - GSController.GetOpsTillSuspend()) / this.towns.len()), Log.LVL_DEBUG);
         // Also store a savegame version flag
         save_table.save_version <- this.current_save_version;
+        
+        // Save tech advance data
+        if (this.tech_advance != null) {
+            save_table.tech_advance_data <- this.tech_advance.Save();
+        }
     }
 
     return save_table;
@@ -343,6 +385,11 @@ function MainClass::Load(version, saved_data)
 
         foreach (townid, town_data in saved_data.town_data_table) {
             ::TownDataTable[townid] <- town_data;
+        }
+        
+        // Load tech advance data if available
+        if (saved_data.rawin("tech_advance_data") && this.tech_advance != null) {
+            this.tech_advance.Load(saved_data.tech_advance_data);
         }
     }
     else {
@@ -383,8 +430,14 @@ function MainClass::UpdateCompanyList()
         local company = Company(c, false);
         this.companies.append(company);
 
-        if (this.story_editor != null)
-            this.story_editor.CreateNewCompanyStoryBook(company);
+        if (this.story_editor != null) {
+            this.story_editor.CreateNewCompanyStoryBook(company, this.tech_advance);
+            
+            // Update tech page for new company
+            if (this.tech_advance != null) {
+                this.story_editor.UpdateTechPage(company, this.tech_advance);
+            }
+        }
     }
 }
 
@@ -572,10 +625,39 @@ function MainClass::ManageTowns()
         foreach (company in this.companies) {
             company.MonthlyUpdateGUIGoals(this.towns);
         }
+        
+        // Update tech pages monthly (to show research progress)
+        if (this.tech_advance != null) {
+            foreach (company in this.companies) {
+                this.story_editor.UpdateTechPage(company, this.tech_advance);
+            }
+        }
 
         this.current_month = month;
         local month_tick_duration = GSController.GetTick() - month_tick;
         Log.Info("Monthly Update took "+month_tick_duration+" ticks.", Log.LVL_DEBUG);
+    }
+    
+    // Run the yearly functions
+    local year = GSDate.GetYear(date);
+    local diff_year = year - this.current_year;
+    if (diff_year != 0) {
+        Log.Info("Starting Yearly Updates (year " + year + ")...", Log.LVL_INFO);
+        
+        // Check for new available engines
+        if (this.tech_advance != null) {
+            local new_engines = this.tech_advance.CheckNewAvailableEngines();
+            
+            // Update tech pages if new engines became available
+            if (new_engines) {
+                Log.Info("New engines available, updating tech pages", Log.LVL_INFO);
+                foreach (company in this.companies) {
+                    this.story_editor.UpdateTechPage(company, this.tech_advance);
+                }
+            }
+        }
+        
+        this.current_year = year;
     }
 
     // Run the yearly functions - Nothing to do for now, so we leave it out
