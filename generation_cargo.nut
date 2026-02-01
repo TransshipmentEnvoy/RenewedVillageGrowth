@@ -65,7 +65,7 @@ function GenerationCargo::Manage()
 
     local diff_hour = hour - this.current_hour;
     if (diff_hour != 0) {
-        Log.Info("Extended: Starting Hourly Updates...", Log.LVL_DEBUG);
+        Log.Info("Extended: GenerationCargo: Starting Hourly Updates...", Log.LVL_DEBUG);
 
         /* TODO: add base rate profile */
         /* TODO: prod_rate change to new settings */
@@ -79,7 +79,7 @@ function GenerationCargo::Manage()
         if (prod_rate < -120) {
             prod_rate = -120;
         }
-        Log.Info("Extended: Town Cargo Prod Rate: " + prod_rate, Log.LVL_DEBUG);
+        Log.Info("Extended: GenerationCargo: Town Cargo Prod Rate: " + prod_rate, Log.LVL_DEBUG);
         GSGameSettings.SetValue("economy.town_cargo_scale_factor", prod_rate.tointeger());
 
         this.current_hour = hour;
@@ -87,7 +87,7 @@ function GenerationCargo::Manage()
 
     local diff_year = year - this.current_year;
     if (diff_year != 0) {
-        Log.Info("Extended: Starting Yearly Updates...", Log.LVL_DEBUG);
+        Log.Info("Extended: GenerationCargo: Starting Yearly Updates...", Log.LVL_DEBUG);
 
         this.current_year = year;
     }
