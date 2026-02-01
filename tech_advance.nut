@@ -8,9 +8,17 @@ class TechAdvance {
     last_check_year = null;       // Last year we checked for new available engines
     button_element_map = null;    // Table: element_id -> engine_id (for story page buttons)
     
+    // Callback references (set via SetCallbackInfo)
+    story_editor = null;          // Reference to StoryEditor for UI updates
+    companies = null;             // Reference to companies list
+    
+    // Time tracking for periodic updates
+    current_month = null;         // Current month for monthly updates
+    current_year = null;          // Current year for yearly updates
+    
     // Research configuration
     static RESEARCH_COST = 100000;           // Fixed cost per engine (£100,000)
-    static RESEARCH_DURATION = 74 * 30;      // Fixed duration in ticks (30 days at 1x speed, ~74 ticks/day)
+    static RESEARCH_DURATION = 6;            // Fixed duration in months
     
     constructor() {
         GSGameSettings.SetValue("vehicle.never_expire_vehicles", 0);
@@ -23,6 +31,10 @@ class TechAdvance {
         this.button_element_map = {};
         this.game_start_date = GSDate.GetCurrentDate();
         this.last_check_year = GSDate.GetYear(this.game_start_date);
+        
+        // Initialize time tracking
+        this.current_month = GSDate.GetMonth(this.game_start_date);
+        this.current_year = GSDate.GetYear(this.game_start_date);
 
         Log.Info("TechAdvance: Loading all vehicle engines...", Log.LVL_INFO);
         this.LoadEngineData();
@@ -258,11 +270,45 @@ function TechAdvance::HandleUnlockButton(company_id, element_id) {
 }
 
 function TechAdvance::Manage() {
-    // Process ongoing research
-    this.ProcessResearch();
+    // Monthly updates
+    local date = GSDate.GetCurrentDate();
+    local month = GSDate.GetMonth(date);
+    if (month != this.current_month) {
+        // Process ongoing research (monthly)
+        this.ProcessResearch();
+        
+        // Update tech pages monthly (to show research progress)
+        if (this.story_editor != null && this.companies != null) {
+            foreach (company in this.companies) {
+                this.story_editor.UpdateTechPage(company, this);
+            }
+        }
+        this.current_month = month;
+    }
     
-    // Check for new available engines annually
-    this.CheckNewAvailableEngines();
+    // Yearly updates
+    local year = GSDate.GetYear(date);
+    if (year != this.current_year) {
+        Log.Info("TechAdvance: Yearly check for new engines (year " + year + ")...", Log.LVL_INFO);
+        
+        // Check for new available engines
+        local new_engines = this.CheckNewAvailableEngines();
+        
+        // Update tech pages if new engines became available
+        if (new_engines && this.story_editor != null && this.companies != null) {
+            Log.Info("TechAdvance: New engines available, updating tech pages", Log.LVL_INFO);
+            foreach (company in this.companies) {
+                this.story_editor.UpdateTechPage(company, this);
+            }
+        }
+        
+        this.current_year = year;
+    }
+}
+
+function TechAdvance::SetCallbackInfo(story_editor, companies) {
+    this.story_editor = story_editor;
+    this.companies = companies;
 }
 
 function TechAdvance::Save() {

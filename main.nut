@@ -147,6 +147,9 @@ function MainClass::Start()
     
     // Initialize tech pages if tech_advance is enabled
     if (this.tech_advance != null && init_error == InitError.NONE) {
+        // Set callback references for tech_advance to handle its own periodic updates
+        this.tech_advance.SetCallbackInfo(this.story_editor, this.companies);
+        
         Log.Info("Initializing technology pages for all companies...", Log.LVL_INFO);
         foreach (company in this.companies) {
             this.story_editor.UpdateTechPage(company, this.tech_advance);
@@ -625,13 +628,6 @@ function MainClass::ManageTowns()
         foreach (company in this.companies) {
             company.MonthlyUpdateGUIGoals(this.towns);
         }
-        
-        // Update tech pages monthly (to show research progress)
-        if (this.tech_advance != null) {
-            foreach (company in this.companies) {
-                this.story_editor.UpdateTechPage(company, this.tech_advance);
-            }
-        }
 
         this.current_month = month;
         local month_tick_duration = GSController.GetTick() - month_tick;
@@ -639,28 +635,6 @@ function MainClass::ManageTowns()
     }
     
     // Run the yearly functions
-    local year = GSDate.GetYear(date);
-    local diff_year = year - this.current_year;
-    if (diff_year != 0) {
-        Log.Info("Starting Yearly Updates (year " + year + ")...", Log.LVL_INFO);
-        
-        // Check for new available engines
-        if (this.tech_advance != null) {
-            local new_engines = this.tech_advance.CheckNewAvailableEngines();
-            
-            // Update tech pages if new engines became available
-            if (new_engines) {
-                Log.Info("New engines available, updating tech pages", Log.LVL_INFO);
-                foreach (company in this.companies) {
-                    this.story_editor.UpdateTechPage(company, this.tech_advance);
-                }
-            }
-        }
-        
-        this.current_year = year;
-    }
-
-    // Run the yearly functions - Nothing to do for now, so we leave it out
     local year = GSDate.GetYear(date);
     local diff_year = year - this.current_year;
     if ( diff_year == 0)
