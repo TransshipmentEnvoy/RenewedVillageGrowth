@@ -252,134 +252,257 @@ function StoryEditor::UpdateTechPage(company, tech_advance)
 {
     if (company.sp_tech == null || !GSStoryPage.IsValidStoryPage(company.sp_tech)) return;
     if (tech_advance == null) return;
-    
+
     // Skip for exempt companies
     if (company.is_exempted) {
-        // Clear page and show exemption message
-        local elements = GSStoryPageElementList(company.sp_tech);
-        foreach (element, _ in elements) {
-            GSStoryPage.RemoveElement(element);
+        if (company.tech_ui_state == null || !company.tech_ui_state.rawin("mode") || company.tech_ui_state.mode != "exempt") {
+            this.ClearTechStoryPage(company, tech_advance);
+            local msg_id = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0,
+                GSText(GSText.STR_TECH_EXEMPT_MESSAGE));
+            company.tech_ui_state = { mode = "exempt", msg_id = msg_id };
         }
-        GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, 
-            GSText(GSText.STR_TECH_EXEMPT_MESSAGE));
         return;
     }
-    
-    // Remove all existing elements and clear button mapping
+
+    this.EnsureTechUILayout(company, tech_advance);
+
+    // Header
+    local ui = company.tech_ui_state;
+    local cost_k = tech_advance.RESEARCH_COST / 1000;
+    GSStoryPage.UpdateElement(ui.header_id, 0, GSText(GSText.STR_TECH_HEADER, cost_k));
+
+    // Company data
+    if (!tech_advance.company_unlocks.rawin(company.id)) return;
+    local company_data = tech_advance.company_unlocks[company.id];
+
+    // Research queue
+    if (company_data.research_queue.len() > 0) {
+        GSStoryPage.UpdateElement(ui.queue_header_id, 0, GSText(GSText.STR_TECH_RESEARCHING_HEADER));
+    } else {
+        GSStoryPage.UpdateElement(ui.queue_header_id, 0, this.EmptyText());
+    }
+
+    local max_queue_lines = ui.queue_item_ids.len();
+    for (local i = 0; i < max_queue_lines; i++) {
+        if (i < company_data.research_queue.len()) {
+            local item = company_data.research_queue[i];
+            local engine_info = tech_advance.engine_data[item.engine_id];
+            local progress_percent = 100 - ((item.progress * 100) / tech_advance.RESEARCH_DURATION);
+            GSStoryPage.UpdateElement(ui.queue_item_ids[i], 0,
+                GSText(GSText.STR_TECH_RESEARCHING_ITEM, engine_info.name, progress_percent));
+        } else {
+            GSStoryPage.UpdateElement(ui.queue_item_ids[i], 0, this.EmptyText());
+        }
+    }
+
+    if (company_data.research_queue.len() > max_queue_lines) {
+        GSStoryPage.UpdateElement(ui.queue_more_id, 0,
+            GSText(GSText.STR_TECH_MORE_RESEARCHING, company_data.research_queue.len() - max_queue_lines));
+    } else {
+        GSStoryPage.UpdateElement(ui.queue_more_id, 0, this.EmptyText());
+    }
+
+    // Build a set of engines currently being researched
+    local researching_engines = {};
+    foreach (item in company_data.research_queue) {
+        researching_engines[item.engine_id] <- true;
+    }
+
+    // Determine filter
+    local filter_vtype = ui.filter_vtype;
+    local filter_label = this.GetTechFilterLabel(filter_vtype);
+
+    // Collect available engines for this company & filter
+    local current_date = GSDate.GetCurrentDate();
+    local available = [];
+    foreach (engine_id, engine_info in tech_advance.engine_data) {
+        if (filter_vtype != -1 && engine_info.vehicle_type != filter_vtype) continue;
+        if (engine_info.intro_date > 0 && engine_info.intro_date > current_date) continue;
+        if (company_data.unlocked_engines.rawin(engine_id)) continue;
+        if (researching_engines.rawin(engine_id)) continue;
+        available.append({ engine_id = engine_id, intro_date = engine_info.intro_date, name = engine_info.name });
+    }
+
+    available.sort(function(a, b) {
+        if (a.intro_date < b.intro_date) return -1;
+        if (a.intro_date > b.intro_date) return 1;
+        if (a.name < b.name) return -1;
+        if (a.name > b.name) return 1;
+        return 0;
+    });
+
+    local total_available = available.len();
+    local page_size = ui.page_size;
+    if (page_size <= 0) page_size = 10;
+
+    // Clamp offset
+    if (ui.offset < 0) ui.offset = 0;
+    if (total_available == 0) {
+        ui.offset = 0;
+    } else {
+        local max_offset = total_available - page_size;
+        if (max_offset < 0) max_offset = 0;
+        if (ui.offset > max_offset) ui.offset = max_offset;
+    }
+
+    local show_count = 0;
+    if (total_available > ui.offset) {
+        show_count = total_available - ui.offset;
+        if (show_count > page_size) show_count = page_size;
+    }
+
+    // Page status
+    local range_start = total_available > 0 ? ui.offset + 1 : 0;
+    local range_end = total_available > 0 ? ui.offset + show_count : 0;
+    GSStoryPage.UpdateElement(ui.status_id, 0,
+        GSText(GSText.STR_TECH_PAGE_STATUS, filter_label, range_start, range_end, total_available));
+
+    // Render page slots
+    local max_name_len = 48;
+    for (local i = 0; i < page_size; i++) {
+        local name_id = null;
+        local button_id = null;
+
+        if (ui.rawin("engine_slots")) {
+            if (i >= ui.engine_slots.len()) break;
+            name_id = ui.engine_slots[i].name_id;
+            button_id = ui.engine_slots[i].button_id;
+        } else {
+            // Backward compatibility: layout v1 (should be rare; kept for safety)
+            name_id = ui.engine_name_ids[i];
+            button_id = ui.engine_button_ids[i];
+        }
+
+        if (i < show_count) {
+            local entry = available[ui.offset + i];
+            local display_name = this.TruncateString(entry.name, max_name_len);
+            GSStoryPage.UpdateElement(name_id, 0, GSText(GSText.STR_TECH_ENGINE_ITEM, display_name));
+            GSStoryPage.UpdateElement(button_id, 0, GSText(GSText.STR_TECH_BUTTON_RESEARCH, cost_k));
+            tech_advance.button_element_map[button_id] <- { kind = "research", engine_id = entry.engine_id };
+        } else {
+            GSStoryPage.UpdateElement(name_id, 0, this.EmptyText());
+            GSStoryPage.UpdateElement(button_id, 0, this.EmptyText());
+            if (tech_advance.button_element_map.rawin(button_id)) delete tech_advance.button_element_map[button_id];
+        }
+    }
+
+    // Footer
+    if (total_available == 0) {
+        GSStoryPage.UpdateElement(ui.footer_id, 0, GSText(GSText.STR_TECH_NO_AVAILABLE));
+    } else if (ui.offset + show_count < total_available) {
+        GSStoryPage.UpdateElement(ui.footer_id, 0, GSText(GSText.STR_TECH_MORE_AVAILABLE, total_available - (ui.offset + show_count)));
+    } else {
+        GSStoryPage.UpdateElement(ui.footer_id, 0, this.EmptyText());
+    }
+}
+
+function StoryEditor::EmptyText()
+{
+    return GSText(GSText.STR_STRING, GSText(GSText.STR_EMPTY));
+}
+
+function StoryEditor::TruncateString(value, max_len)
+{
+    if (value == null) return "";
+    if (max_len == null || max_len <= 0) return value;
+    if (value.len() <= max_len) return value;
+    if (max_len <= 3) return value.slice(0, max_len);
+    return value.slice(0, max_len - 3) + "...";
+}
+
+function StoryEditor::GetTechFilterLabel(filter_vtype)
+{
+    switch (filter_vtype) {
+        case GSVehicle.VT_RAIL:  return GSText(GSText.STR_TECH_FILTER_RAIL);
+        case GSVehicle.VT_ROAD:  return GSText(GSText.STR_TECH_FILTER_ROAD);
+        case GSVehicle.VT_WATER: return GSText(GSText.STR_TECH_FILTER_WATER);
+        case GSVehicle.VT_AIR:   return GSText(GSText.STR_TECH_FILTER_AIR);
+        default:                 return GSText(GSText.STR_TECH_FILTER_ALL);
+    }
+}
+
+function StoryEditor::ClearTechStoryPage(company, tech_advance)
+{
+    if (company.sp_tech == null || !GSStoryPage.IsValidStoryPage(company.sp_tech)) return;
+
     local elements = GSStoryPageElementList(company.sp_tech);
     foreach (element, _ in elements) {
-        // Clear button mapping for this element
-        if (tech_advance.button_element_map.rawin(element)) {
+        if (tech_advance != null && tech_advance.button_element_map != null && tech_advance.button_element_map.rawin(element)) {
             delete tech_advance.button_element_map[element];
         }
         GSStoryPage.RemoveElement(element);
     }
-    
-    // Add header
-    GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, 
-        GSText(GSText.STR_TECH_HEADER, tech_advance.RESEARCH_COST / 1000));
-    
-    // Get company unlock data
-    if (!tech_advance.company_unlocks.rawin(company.id)) return;
-    local company_data = tech_advance.company_unlocks[company.id];
-    
-    // Show research queue status
-    if (company_data.research_queue.len() > 0) {
-        GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, 
-            GSText(GSText.STR_TECH_RESEARCHING_HEADER));
-        
-        foreach (item in company_data.research_queue) {
-            local engine_info = tech_advance.engine_data[item.engine_id];
-            local progress_percent = 100 - ((item.progress * 100) / tech_advance.RESEARCH_DURATION);
-            GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, 
-                GSText(GSText.STR_TECH_RESEARCHING_ITEM, engine_info.name, progress_percent));
-        }
+}
+
+function StoryEditor::EnsureTechUILayout(company, tech_advance)
+{
+    if (company.tech_ui_state != null && company.tech_ui_state.rawin("layout_version") && company.tech_ui_state.layout_version == 2) {
+        return;
     }
-    
-    // Group engines by vehicle type
-    local current_date = GSDate.GetCurrentDate();
-    local vehicle_type_names = {};
-    vehicle_type_names[GSVehicle.VT_RAIL] <- GSText.STR_TECH_TYPE_RAIL;
-    vehicle_type_names[GSVehicle.VT_ROAD] <- GSText.STR_TECH_TYPE_ROAD;
-    vehicle_type_names[GSVehicle.VT_WATER] <- GSText.STR_TECH_TYPE_WATER;
-    vehicle_type_names[GSVehicle.VT_AIR] <- GSText.STR_TECH_TYPE_AIR;
-    
-    foreach (vtype in [GSVehicle.VT_RAIL, GSVehicle.VT_ROAD, GSVehicle.VT_WATER, GSVehicle.VT_AIR]) {
-        local available_engines = [];
-        local locked_count = 0;
-        local unlocked_count = 0;
-        
-        // Collect engines of this type that are available for research
-        foreach (engine_id, engine_info in tech_advance.engine_data) {
-            if (engine_info.vehicle_type != vtype) continue;
-            
-            // Only show engines that have reached their introduction date
-            if (engine_info.intro_date > 0 && engine_info.intro_date > current_date) continue;
-            
-            // Check if unlocked or in research
-            local is_unlocked = company_data.unlocked_engines.rawin(engine_id);
-            local in_research = false;
-            foreach (item in company_data.research_queue) {
-                if (item.engine_id == engine_id) {
-                    in_research = true;
-                    break;
-                }
-            }
-            
-            if (is_unlocked) {
-                unlocked_count++;
-            } else if (!in_research) {
-                available_engines.append(engine_id);
-                locked_count++;
-            }
-        }
-        
-        // Always show vehicle type section
-        GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, 
-            GSText(vehicle_type_names[vtype], unlocked_count, locked_count + unlocked_count));
-        
-        // Show up to 10 available engines with research buttons (only if there are any)
-        if (available_engines.len() > 0) {
-            local shown = 0;
-            foreach (engine_id in available_engines) {
-                if (shown >= 10) {
-                    GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, 
-                        GSText(GSText.STR_TECH_MORE_AVAILABLE, available_engines.len() - shown));
-                    break;
-                }
-                
-                local engine_info = tech_advance.engine_data[engine_id];
-                
-                // Add text with engine name
-                GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, 
-                    GSText(GSText.STR_TECH_ENGINE_ITEM, engine_info.name));
-                
-                // Add research button (reference must be 0 for SPET_BUTTON_PUSH)
-                local element_id = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, 
-                    0, GSText(GSText.STR_TECH_BUTTON_RESEARCH, tech_advance.RESEARCH_COST / 1000));
-                
-                // Store mapping: element_id -> engine_id for event handling
-                tech_advance.button_element_map[element_id] <- engine_id;
-                
-                shown++;
-            }
-        }
+
+    // Reset existing page content and rebuild a fixed-slot layout
+    this.ClearTechStoryPage(company, tech_advance);
+
+    // Create button references with float flags
+    local button_colour = GSStoryPage.SPBC_WHITE;
+    local ref_float_left = GSStoryPage.MakePushButtonReference(button_colour, GSStoryPage.SPBF_FLOAT_LEFT);
+    local ref_float_right = GSStoryPage.MakePushButtonReference(button_colour, GSStoryPage.SPBF_FLOAT_RIGHT);
+
+    local ui = {
+        layout_version = 2,
+        mode = "normal",
+        filter_vtype = -1,
+        offset = 0,
+        page_size = 10,
+        queue_item_ids = [],
+        engine_slots = []
+    };
+
+    // Header
+    ui.header_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+
+    // Research queue area
+    ui.queue_header_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+    for (local i = 0; i < 4; i++) {
+        ui.queue_item_ids.append(GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText()));
     }
-    
-    // Show message if no engines available
-    local has_any_available = false;
-    foreach (engine_id, engine_info in tech_advance.engine_data) {
-        if (engine_info.intro_date > 0 && engine_info.intro_date > current_date) continue;
-        if (!company_data.unlocked_engines.rawin(engine_id)) {
-            has_any_available = true;
-            break;
-        }
+    ui.queue_more_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+
+    // Controls row: filter + nav + status
+    // Filter buttons (float left)
+    local btn_all = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_left, GSText(GSText.STR_TECH_FILTER_ALL));
+    local btn_rail = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_left, GSText(GSText.STR_TECH_FILTER_RAIL));
+    local btn_road = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_left, GSText(GSText.STR_TECH_FILTER_ROAD));
+    local btn_water = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_left, GSText(GSText.STR_TECH_FILTER_WATER));
+    local btn_air = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_left, GSText(GSText.STR_TECH_FILTER_AIR));
+
+    tech_advance.button_element_map[btn_all] <- { kind = "filter", vtype = -1 };
+    tech_advance.button_element_map[btn_rail] <- { kind = "filter", vtype = GSVehicle.VT_RAIL };
+    tech_advance.button_element_map[btn_road] <- { kind = "filter", vtype = GSVehicle.VT_ROAD };
+    tech_advance.button_element_map[btn_water] <- { kind = "filter", vtype = GSVehicle.VT_WATER };
+    tech_advance.button_element_map[btn_air] <- { kind = "filter", vtype = GSVehicle.VT_AIR };
+
+    // Navigation buttons (float right)
+    ui.nav_prev_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_right, GSText(GSText.STR_TECH_BUTTON_PREV));
+    ui.nav_next_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_right, GSText(GSText.STR_TECH_BUTTON_NEXT));
+    tech_advance.button_element_map[ui.nav_prev_id] <- { kind = "nav", delta = -1 };
+    tech_advance.button_element_map[ui.nav_next_id] <- { kind = "nav", delta = 1 };
+
+    // Status (anchor paragraph for floated controls)
+    ui.status_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+
+    // Engine list slots (fixed)
+    for (local i = 0; i < ui.page_size; i++) {
+        // Button floats right relative to the following paragraph (engine name)
+        local button_id = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_right, this.EmptyText());
+        local name_id = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+        ui.engine_slots.append({ name_id = name_id, button_id = button_id });
     }
-    
-    if (!has_any_available && company_data.research_queue.len() == 0) {
-        GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, 
-            GSText(GSText.STR_TECH_NO_AVAILABLE));
-    }
+
+    // Footer
+    ui.footer_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+
+    company.tech_ui_state = ui;
 }
 
 /* Wrapper that creates a new StoryPage but disable date output. */

@@ -18,6 +18,8 @@ class Company
     sp_welcome = null;      // story page welcome
     sp_tech = null;         // story page for technology tree
 
+    tech_ui_state = null;   // transient: persistent element ids + paging/filter state
+
     is_exempted = null;     // whether company requested exemption from GSToyLib
 
     constructor(id, load_data)

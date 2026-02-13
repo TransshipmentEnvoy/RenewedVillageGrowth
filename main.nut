@@ -63,6 +63,8 @@ class MainClass extends GSController
     generation_cargo = null;
     tech_advance = null;
 
+    pending_tech_advance_data = null;
+
     constructor() {
         this.companies = [];
         this.towns = [];
@@ -83,6 +85,8 @@ class MainClass extends GSController
         // extended
         this.generation_cargo = null;
         this.tech_advance = null;
+
+        this.pending_tech_advance_data = null;
     }
 }
 
@@ -125,6 +129,12 @@ function MainClass::Start()
         Log.Info("Extended: JGRPP detected", Log.LVL_INFO);
         Log.Info("Extended: Tech Advancement Control", Log.LVL_INFO);
         this.tech_advance = TechAdvance();
+
+        // Load saved tech-advance data (Load() is called before Start())
+        if (this.pending_tech_advance_data != null) {
+            this.tech_advance.Load(this.pending_tech_advance_data);
+            this.pending_tech_advance_data = null;
+        }
     }
     GSGame.Unpause();
 
@@ -298,11 +308,11 @@ function MainClass::HandleEvents()
             local element_id = event.GetElementID();
             local company_id = event.GetCompanyID();
             
-            // Check if this is a tech tree button (element_id maps to engine_id)
+            // Tech tree buttons (element_id maps to an action table)
             if (this.tech_advance != null && this.tech_advance.button_element_map.rawin(element_id)) {
-                local success = this.tech_advance.HandleUnlockButton(company_id, element_id);
-                
-                // Update tech page to reflect changes
+                local action = this.tech_advance.button_element_map[element_id];
+
+                // Find company instance
                 local company = null;
                 foreach (c in this.companies) {
                     if (c.id == company_id) {
@@ -310,13 +320,35 @@ function MainClass::HandleEvents()
                         break;
                     }
                 }
-                
-                if (company != null) {
-                    this.story_editor.UpdateTechPage(company, this.tech_advance);
-                    
-                    if (success) {
-                        Log.Info("Company " + company_id + " started research via button click", Log.LVL_INFO);
+                if (company == null) break;
+
+                local success = false;
+                if (typeof(action) == "table" && action.rawin("kind")) {
+                    switch (action.kind) {
+                        case "research":
+                            if (action.rawin("engine_id")) {
+                                success = this.tech_advance.StartResearch(company_id, action.engine_id);
+                            }
+                            break;
+                        case "nav":
+                            if (company.tech_ui_state != null && action.rawin("delta")) {
+                                local page_size = company.tech_ui_state.rawin("page_size") ? company.tech_ui_state.page_size : 10;
+                                company.tech_ui_state.offset += action.delta * page_size;
+                            }
+                            break;
+                        case "filter":
+                            if (company.tech_ui_state != null && action.rawin("vtype")) {
+                                company.tech_ui_state.filter_vtype = action.vtype;
+                                company.tech_ui_state.offset = 0;
+                            }
+                            break;
                     }
+                }
+
+                // Refresh tech page
+                this.story_editor.UpdateTechPage(company, this.tech_advance);
+                if (success) {
+                    Log.Info("Company " + company_id + " started research via button click", Log.LVL_INFO);
                 }
             }
             break;
@@ -390,9 +422,9 @@ function MainClass::Load(version, saved_data)
             ::TownDataTable[townid] <- town_data;
         }
         
-        // Load tech advance data if available
-        if (saved_data.rawin("tech_advance_data") && this.tech_advance != null) {
-            this.tech_advance.Load(saved_data.tech_advance_data);
+        // Load tech advance data later in Start() after TechAdvance is constructed
+        if (saved_data.rawin("tech_advance_data")) {
+            this.pending_tech_advance_data = saved_data.tech_advance_data;
         }
     }
     else {

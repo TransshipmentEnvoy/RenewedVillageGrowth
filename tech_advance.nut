@@ -6,7 +6,7 @@ class TechAdvance {
     company_unlocks = null;       // Table: company_id -> {unlocked_engines, research_queue}
     game_start_date = null;       // Game start date for auto-unlocking historical vehicles
     last_check_year = null;       // Last year we checked for new available engines
-    button_element_map = null;    // Table: element_id -> engine_id (for story page buttons)
+    button_element_map = null;    // Transient table: element_id -> action table (for story page buttons)
     
     // Callback references (set via SetCallbackInfo)
     story_editor = null;          // Reference to StoryEditor for UI updates
@@ -259,14 +259,16 @@ function TechAdvance::CheckNewAvailableEngines() {
 
 function TechAdvance::HandleUnlockButton(company_id, element_id) {
     // Handle button click from story page
-    // Map element_id back to engine_id
+    // Map element_id back to engine_id (research actions only)
     if (!this.button_element_map.rawin(element_id)) {
         Log.Warning("TechAdvance: Unknown element_id " + element_id + " clicked");
         return false;
     }
     
-    local engine_id = this.button_element_map[element_id];
-    return this.StartResearch(company_id, engine_id);
+    local action = this.button_element_map[element_id];
+    if (typeof(action) != "table" || !action.rawin("kind")) return false;
+    if (action.kind != "research" || !action.rawin("engine_id")) return false;
+    return this.StartResearch(company_id, action.engine_id);
 }
 
 function TechAdvance::Manage() {
@@ -280,6 +282,8 @@ function TechAdvance::Manage() {
         // Update tech pages monthly (to show research progress)
         if (this.story_editor != null && this.companies != null) {
             foreach (company in this.companies) {
+                if (!this.company_unlocks.rawin(company.id)) continue;
+                if (this.company_unlocks[company.id].research_queue.len() == 0) continue;
                 this.story_editor.UpdateTechPage(company, this);
             }
         }
@@ -316,14 +320,8 @@ function TechAdvance::Save() {
     local save_data = {
         game_start_date = this.game_start_date,
         last_check_year = this.last_check_year,
-        company_unlocks = {},
-        button_element_map = {}
+        company_unlocks = {}
     };
-    
-    // Save button element mapping
-    foreach (element_id, engine_id in this.button_element_map) {
-        save_data.button_element_map[element_id] <- engine_id;
-    }
     
     // Save company unlock data
     foreach (company_id, company_data in this.company_unlocks) {
@@ -360,12 +358,8 @@ function TechAdvance::Load(saved_data) {
     this.game_start_date = saved_data.game_start_date;
     this.last_check_year = saved_data.last_check_year;
     
-    // Restore button element mapping
-    if (saved_data.rawin("button_element_map")) {
-        foreach (element_id, engine_id in saved_data.button_element_map) {
-            this.button_element_map[element_id] <- engine_id;
-        }
-    }
+    // Button mapping is transient and rebuilt when pages are (re)drawn
+    this.button_element_map = {};
     
     // Restore company unlocks
     foreach (company_id, company_data in saved_data.company_unlocks) {

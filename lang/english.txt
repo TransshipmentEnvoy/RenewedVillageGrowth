@@ -164,10 +164,19 @@ STR_TECH_HEADER                 :Research new vehicle technologies by paying £{
 STR_TECH_EXEMPT_MESSAGE         :Your company is exempt from vehicle restrictions. All vehicles are available without research.
 STR_TECH_RESEARCHING_HEADER     :{ORANGE}Currently Researching:{BLACK}
 STR_TECH_RESEARCHING_ITEM       :  • {RAW_STRING} - {NUM}% complete
+STR_TECH_MORE_RESEARCHING       :  ... and {NUM} more researching
 STR_TECH_TYPE_RAIL              :{LTBLUE}Railways:{BLACK} {NUM}/{NUM} unlocked
 STR_TECH_TYPE_ROAD              :{ORANGE}Road Vehicles:{BLACK} {NUM}/{NUM} unlocked
 STR_TECH_TYPE_WATER             :{BLUE}Ships:{BLACK} {NUM}/{NUM} unlocked
 STR_TECH_TYPE_AIR               :{YELLOW}Aircraft:{BLACK} {NUM}/{NUM} unlocked
+STR_TECH_FILTER_ALL             :All types
+STR_TECH_FILTER_RAIL            :Rail
+STR_TECH_FILTER_ROAD            :Road
+STR_TECH_FILTER_WATER           :Water
+STR_TECH_FILTER_AIR             :Air
+STR_TECH_BUTTON_PREV            :Previous page
+STR_TECH_BUTTON_NEXT            :Next page
+STR_TECH_PAGE_STATUS            :{STRING} - showing {NUM}-{NUM} of {NUM} available
 STR_TECH_ENGINE_ITEM            :  • {RAW_STRING}
 STR_TECH_BUTTON_RESEARCH        :Research (£{NUM}k)
 STR_TECH_MORE_AVAILABLE         :  ... and {NUM} more available

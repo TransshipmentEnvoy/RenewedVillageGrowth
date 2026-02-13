@@ -3,6 +3,8 @@
 slnx.sqlite
 .suo
 
+/tmp
+
 .github/copilot*
 /CLAUDE.md
 /AGENTS.md
