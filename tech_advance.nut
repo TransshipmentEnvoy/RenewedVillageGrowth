@@ -79,7 +79,8 @@ function TechAdvance::UpdateCompanyList() {
             // Initialize company unlock data
             this.company_unlocks[c] <- {
                 unlocked_engines = {},    // Table: engine_id -> true
-                research_queue = []       // Array of {engine_id, progress}
+                research_queue = [],      // Array of {engine_id, progress}
+                available_counts = null   // Cached: {total, rail, road, water, air, filtered[]}
             };
             
             // Auto-unlock historical vehicles (intro_date < game_start or intro_date == 0)
@@ -137,6 +138,59 @@ function TechAdvance::ApplyEngineRestrictions(company_id) {
     async = null;
     
     Log.Info("TechAdvance: Applied restrictions for " + this.engine_data.len() + " engines", Log.LVL_DEBUG);
+}
+
+function TechAdvance::UpdateAvailableCounts(company_id) {
+    if (!this.company_unlocks.rawin(company_id)) return;
+
+    local company_data = this.company_unlocks[company_id];
+    local current_date = GSDate.GetCurrentDate();
+
+    // Build researching engines set
+    local researching_engines = {};
+    foreach (item in company_data.research_queue) {
+        researching_engines[item.engine_id] <- true;
+    }
+
+    // Count available engines per vehicle type
+    local counts = {
+        total = 0,
+        rail = 0,
+        road = 0,
+        water = 0,
+        air = 0,
+        filtered = []  // Array to store actual available engine_ids in sorted order
+    };
+
+    foreach (engine_id, engine_info in this.engine_data) {
+        // Skip if not yet introduced
+        if (engine_info.intro_date > 0 && engine_info.intro_date > current_date) continue;
+        // Skip if already unlocked
+        if (company_data.unlocked_engines.rawin(engine_id)) continue;
+        // Skip if currently being researched
+        if (researching_engines.rawin(engine_id)) continue;
+
+        counts.total++;
+        counts.filtered.append({ engine_id = engine_id, intro_date = engine_info.intro_date, name = engine_info.name, vehicle_type = engine_info.vehicle_type });
+
+        switch (engine_info.vehicle_type) {
+            case GSVehicle.VT_RAIL: counts.rail++; break;
+            case GSVehicle.VT_ROAD: counts.road++; break;
+            case GSVehicle.VT_WATER: counts.water++; break;
+            case GSVehicle.VT_AIR: counts.air++; break;
+        }
+    }
+
+    // Sort filtered list by intro_date, then name
+    counts.filtered.sort(function(a, b) {
+        if (a.intro_date < b.intro_date) return -1;
+        if (a.intro_date > b.intro_date) return 1;
+        if (a.name < b.name) return -1;
+        if (a.name > b.name) return 1;
+        return 0;
+    });
+
+    company_data.available_counts = counts;
 }
 
 function TechAdvance::StartResearch(company_id, engine_id) {
@@ -327,7 +381,8 @@ function TechAdvance::Save() {
     foreach (company_id, company_data in this.company_unlocks) {
         save_data.company_unlocks[company_id] <- {
             unlocked_engines = {},
-            research_queue = []
+            research_queue = [],
+            available_counts = null
         };
         
         // Save unlocked engines
@@ -365,7 +420,8 @@ function TechAdvance::Load(saved_data) {
     foreach (company_id, company_data in saved_data.company_unlocks) {
         this.company_unlocks[company_id] <- {
             unlocked_engines = {},
-            research_queue = []
+            research_queue = [],
+            available_counts = null
         };
         
         // Restore unlocked engines

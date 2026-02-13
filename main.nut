@@ -160,6 +160,9 @@ function MainClass::Start()
         // Set callback references for tech_advance to handle its own periodic updates
         this.tech_advance.SetCallbackInfo(this.story_editor, this.companies);
         
+        // Initialize company unlock tracking before updating pages
+        this.tech_advance.UpdateCompanyList();
+        
         Log.Info("Initializing technology pages for all companies...", Log.LVL_INFO);
         foreach (company in this.companies) {
             this.story_editor.UpdateTechPage(company, this.tech_advance);
@@ -340,6 +343,74 @@ function MainClass::HandleEvents()
                             if (company.tech_ui_state != null && action.rawin("vtype")) {
                                 company.tech_ui_state.filter_vtype = action.vtype;
                                 company.tech_ui_state.offset = 0;
+                            }
+                            break;
+                        case "filter_toggle":
+                            if (company.tech_ui_state != null) {
+                                company.tech_ui_state.filter_vtype = this.story_editor.CycleFilterVType(company.tech_ui_state.filter_vtype);
+                                company.tech_ui_state.candidate_nav_index = 0;
+                            }
+                            break;
+                        case "candidate_nav":
+                            if (company.tech_ui_state != null && action.rawin("action") && this.tech_advance.company_unlocks.rawin(company_id)) {
+                                local ui = company.tech_ui_state;
+                                local company_data = this.tech_advance.company_unlocks[company_id];
+
+                                // Get available count from cache
+                                local available_count = 0;
+                                if (company_data.available_counts != null) {
+                                    if (ui.filter_vtype == -1) {
+                                        available_count = company_data.available_counts.total;
+                                    } else {
+                                        // Count filtered entries
+                                        foreach (entry in company_data.available_counts.filtered) {
+                                            if (entry.vehicle_type == ui.filter_vtype) available_count++;
+                                        }
+                                    }
+                                }
+
+                                if (available_count > 0) {
+                                    switch (action.action) {
+                                        case "first":
+                                            ui.candidate_nav_index = 0;
+                                            break;
+                                        case "last":
+                                            ui.candidate_nav_index = available_count - 1;
+                                            break;
+                                        case "prev":
+                                            if (ui.candidate_nav_index > 0) ui.candidate_nav_index--;
+                                            break;
+                                        case "next":
+                                            if (ui.candidate_nav_index < available_count - 1) ui.candidate_nav_index++;
+                                            break;
+                                    }
+                                }
+                            }
+                            break;
+                        case "queue_nav":
+                            if (company.tech_ui_state != null && action.rawin("action")) {
+                                local ui = company.tech_ui_state;
+                                local queue_len = 0;
+                                if (this.tech_advance.company_unlocks.rawin(company_id)) {
+                                    queue_len = this.tech_advance.company_unlocks[company_id].research_queue.len();
+                                }
+
+                                if (queue_len > 0) {
+                                    switch (action.action) {
+                                        case "first":
+                                            ui.queue_nav_index = 0;
+                                            break;
+                                        case "last":
+                                            ui.queue_nav_index = queue_len - 1;
+                                            break;
+                                        case "prev":
+                                            ui.queue_nav_index = (ui.queue_nav_index - 1 + queue_len) % queue_len;
+                                            break;
+                                        case "next":
+                                            ui.queue_nav_index = (ui.queue_nav_index + 1) % queue_len;
+                                            break;
+                                    }
+                                }
                             }
                             break;
                     }

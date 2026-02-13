@@ -181,6 +181,20 @@ STR_TECH_ENGINE_ITEM            :  • {RAW_STRING}
 STR_TECH_BUTTON_RESEARCH        :Research (£{NUM}k)
 STR_TECH_MORE_AVAILABLE         :  ... and {NUM} more available
 STR_TECH_NO_AVAILABLE           :No new vehicles available for research. Check back later as new technologies are introduced.
+STR_TECH_QUEUE_NAV_HEADER       :Research Queue
+STR_TECH_QUEUE_NAV_FIRST        :First
+STR_TECH_QUEUE_NAV_LAST         :Last
+STR_TECH_QUEUE_NAV_PREV         :Previous
+STR_TECH_QUEUE_NAV_NEXT         :Next
+STR_TECH_QUEUE_NAV_ITEM         :{RAW_STRING} ({NUM}/{NUM})
+STR_TECH_QUEUE_NAV_PROGRESS     :Progress: {NUM}% complete ({NUM} {P month months} remaining)
+STR_TECH_QUEUE_NAV_EMPTY        :Queue is currently empty
+STR_TECH_CANDIDATE_NAV_HEADER   :Research Candidate
+STR_TECH_CANDIDATE_NAV_INDEX    :{NUM} / {NUM}
+STR_TECH_CANDIDATE_NAV_EMPTY    :No candidates available
+STR_TECH_CANDIDATE_NAV_ITEM     :{RAW_STRING}
+STR_TECH_CANDIDATE_DETAILS      :{SILVER}Type:{BLACK} {RAW_STRING} {SILVER}| Speed:{BLACK} {VELOCITY} {SILVER}| Capacity:{BLACK} {NUM} {SILVER}| Price:{BLACK} {CURRENCY_SHORT} {SILVER}| Running Cost:{BLACK} {CURRENCY_SHORT}/year
+STR_SEPARATOR                   :{BLACK}--------------------
 
 ##### UTILITY #####
 STR_COMMA                       :{SILVER}{COMMA}{ORANGE}

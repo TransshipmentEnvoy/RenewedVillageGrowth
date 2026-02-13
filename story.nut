@@ -275,125 +275,190 @@ function StoryEditor::UpdateTechPage(company, tech_advance)
     if (!tech_advance.company_unlocks.rawin(company.id)) return;
     local company_data = tech_advance.company_unlocks[company.id];
 
-    // Research queue
-    if (company_data.research_queue.len() > 0) {
-        GSStoryPage.UpdateElement(ui.queue_header_id, 0, GSText(GSText.STR_TECH_RESEARCHING_HEADER));
+    // Research queue navigation (layout version 3)
+    local queue_len = company_data.research_queue.len();
+
+    // Always display header
+    GSStoryPage.UpdateElement(ui.queue_nav_header_id, 0, GSText(GSText.STR_TECH_QUEUE_NAV_HEADER));
+
+    if (queue_len == 0) {
+        // Empty queue - show all buttons in gray (invalid state)
+        GSStoryPage.UpdateElement(ui.queue_nav_first_btn, ui.queue_nav_button_refs.first_ivld, GSText(GSText.STR_TECH_QUEUE_NAV_FIRST));
+        GSStoryPage.UpdateElement(ui.queue_nav_last_btn, ui.queue_nav_button_refs.last_ivld, GSText(GSText.STR_TECH_QUEUE_NAV_LAST));
+        GSStoryPage.UpdateElement(ui.queue_nav_prev_btn, ui.queue_nav_button_refs.prev_ivld, GSText(GSText.STR_TECH_QUEUE_NAV_PREV));
+        GSStoryPage.UpdateElement(ui.queue_nav_next_btn, ui.queue_nav_button_refs.next_ivld, GSText(GSText.STR_TECH_QUEUE_NAV_NEXT));
+        // Clear item info and show empty message
+        GSStoryPage.UpdateElement(ui.queue_nav_item_info, 0, this.EmptyText());
+        GSStoryPage.UpdateElement(ui.queue_nav_progress, 0, GSText(GSText.STR_TECH_QUEUE_NAV_EMPTY));
     } else {
-        GSStoryPage.UpdateElement(ui.queue_header_id, 0, this.EmptyText());
+        // Ensure index is valid
+        if (ui.queue_nav_index >= queue_len) ui.queue_nav_index = queue_len - 1;
+        if (ui.queue_nav_index < 0) ui.queue_nav_index = 0;
+
+        // Update button colors based on current position
+        local at_first = (ui.queue_nav_index == 0);
+        local at_last = (ui.queue_nav_index == queue_len - 1);
+
+        // First/Previous buttons: gray if at first position, green otherwise
+        GSStoryPage.UpdateElement(ui.queue_nav_first_btn,
+            at_first ? ui.queue_nav_button_refs.first_ivld : ui.queue_nav_button_refs.first_avai,
+            GSText(GSText.STR_TECH_QUEUE_NAV_FIRST));
+        GSStoryPage.UpdateElement(ui.queue_nav_prev_btn,
+            at_first ? ui.queue_nav_button_refs.prev_ivld : ui.queue_nav_button_refs.prev_avai,
+            GSText(GSText.STR_TECH_QUEUE_NAV_PREV));
+
+        // Last/Next buttons: gray if at last position, green otherwise
+        GSStoryPage.UpdateElement(ui.queue_nav_last_btn,
+            at_last ? ui.queue_nav_button_refs.last_ivld : ui.queue_nav_button_refs.last_avai,
+            GSText(GSText.STR_TECH_QUEUE_NAV_LAST));
+        GSStoryPage.UpdateElement(ui.queue_nav_next_btn,
+            at_last ? ui.queue_nav_button_refs.next_ivld : ui.queue_nav_button_refs.next_avai,
+            GSText(GSText.STR_TECH_QUEUE_NAV_NEXT));
+
+        // Display current item information
+        local item = company_data.research_queue[ui.queue_nav_index];
+        local engine_info = tech_advance.engine_data[item.engine_id];
+        local current_num = ui.queue_nav_index + 1;  // 1-based display
+
+        GSStoryPage.UpdateElement(ui.queue_nav_item_info, 0,
+            GSText(GSText.STR_TECH_QUEUE_NAV_ITEM, engine_info.name, current_num, queue_len));
+
+        // Display progress
+        local progress_percent = 100 - ((item.progress * 100) / tech_advance.RESEARCH_DURATION);
+        local months_remaining = item.progress;
+
+        GSStoryPage.UpdateElement(ui.queue_nav_progress, 0,
+            GSText(GSText.STR_TECH_QUEUE_NAV_PROGRESS, progress_percent, months_remaining));
     }
 
-    local max_queue_lines = ui.queue_item_ids.len();
-    for (local i = 0; i < max_queue_lines; i++) {
-        if (i < company_data.research_queue.len()) {
-            local item = company_data.research_queue[i];
-            local engine_info = tech_advance.engine_data[item.engine_id];
-            local progress_percent = 100 - ((item.progress * 100) / tech_advance.RESEARCH_DURATION);
-            GSStoryPage.UpdateElement(ui.queue_item_ids[i], 0,
-                GSText(GSText.STR_TECH_RESEARCHING_ITEM, engine_info.name, progress_percent));
-        } else {
-            GSStoryPage.UpdateElement(ui.queue_item_ids[i], 0, this.EmptyText());
-        }
-    }
-
-    if (company_data.research_queue.len() > max_queue_lines) {
-        GSStoryPage.UpdateElement(ui.queue_more_id, 0,
-            GSText(GSText.STR_TECH_MORE_RESEARCHING, company_data.research_queue.len() - max_queue_lines));
-    } else {
-        GSStoryPage.UpdateElement(ui.queue_more_id, 0, this.EmptyText());
-    }
-
-    // Build a set of engines currently being researched
-    local researching_engines = {};
-    foreach (item in company_data.research_queue) {
-        researching_engines[item.engine_id] <- true;
-    }
+    // Update available counts cache
+    tech_advance.UpdateAvailableCounts(company.id);
 
     // Determine filter
     local filter_vtype = ui.filter_vtype;
-    local filter_label = this.GetTechFilterLabel(filter_vtype);
 
-    // Collect available engines for this company & filter
-    local current_date = GSDate.GetCurrentDate();
+    // Get filtered available engines from cache
     local available = [];
-    foreach (engine_id, engine_info in tech_advance.engine_data) {
-        if (filter_vtype != -1 && engine_info.vehicle_type != filter_vtype) continue;
-        if (engine_info.intro_date > 0 && engine_info.intro_date > current_date) continue;
-        if (company_data.unlocked_engines.rawin(engine_id)) continue;
-        if (researching_engines.rawin(engine_id)) continue;
-        available.append({ engine_id = engine_id, intro_date = engine_info.intro_date, name = engine_info.name });
+    if (company_data.available_counts != null) {
+        foreach (entry in company_data.available_counts.filtered) {
+            if (filter_vtype == -1 || entry.vehicle_type == filter_vtype) {
+                available.append(entry);
+            }
+        }
     }
-
-    available.sort(function(a, b) {
-        if (a.intro_date < b.intro_date) return -1;
-        if (a.intro_date > b.intro_date) return 1;
-        if (a.name < b.name) return -1;
-        if (a.name > b.name) return 1;
-        return 0;
-    });
 
     local total_available = available.len();
-    local page_size = ui.page_size;
-    if (page_size <= 0) page_size = 10;
 
-    // Clamp offset
-    if (ui.offset < 0) ui.offset = 0;
+    // Clamp candidate_nav_index to valid range
     if (total_available == 0) {
-        ui.offset = 0;
+        ui.candidate_nav_index = 0;
     } else {
-        local max_offset = total_available - page_size;
-        if (max_offset < 0) max_offset = 0;
-        if (ui.offset > max_offset) ui.offset = max_offset;
+        if (ui.candidate_nav_index < 0) ui.candidate_nav_index = 0;
+        if (ui.candidate_nav_index >= total_available) ui.candidate_nav_index = total_available - 1;
     }
 
-    local show_count = 0;
-    if (total_available > ui.offset) {
-        show_count = total_available - ui.offset;
-        if (show_count > page_size) show_count = page_size;
+    // Update vehicle type statistics (always shown)
+    local counts = company_data.available_counts;
+    local unlocked_rail = 0, unlocked_road = 0, unlocked_water = 0, unlocked_air = 0;
+    local total_rail = 0, total_road = 0, total_water = 0, total_air = 0;
+
+    foreach (engine_id, engine_info in tech_advance.engine_data) {
+        switch (engine_info.vehicle_type) {
+            case GSVehicle.VT_RAIL:
+                total_rail++;
+                if (company_data.unlocked_engines.rawin(engine_id)) unlocked_rail++;
+                break;
+            case GSVehicle.VT_ROAD:
+                total_road++;
+                if (company_data.unlocked_engines.rawin(engine_id)) unlocked_road++;
+                break;
+            case GSVehicle.VT_WATER:
+                total_water++;
+                if (company_data.unlocked_engines.rawin(engine_id)) unlocked_water++;
+                break;
+            case GSVehicle.VT_AIR:
+                total_air++;
+                if (company_data.unlocked_engines.rawin(engine_id)) unlocked_air++;
+                break;
+        }
     }
 
-    // Page status
-    local range_start = total_available > 0 ? ui.offset + 1 : 0;
-    local range_end = total_available > 0 ? ui.offset + show_count : 0;
-    GSStoryPage.UpdateElement(ui.status_id, 0,
-        GSText(GSText.STR_TECH_PAGE_STATUS, filter_label, range_start, range_end, total_available));
+    GSStoryPage.UpdateElement(ui.candidate_type_stats_rail, 0, GSText(GSText.STR_TECH_TYPE_RAIL, unlocked_rail, total_rail));
+    GSStoryPage.UpdateElement(ui.candidate_type_stats_road, 0, GSText(GSText.STR_TECH_TYPE_ROAD, unlocked_road, total_road));
+    GSStoryPage.UpdateElement(ui.candidate_type_stats_water, 0, GSText(GSText.STR_TECH_TYPE_WATER, unlocked_water, total_water));
+    GSStoryPage.UpdateElement(ui.candidate_type_stats_air, 0, GSText(GSText.STR_TECH_TYPE_AIR, unlocked_air, total_air));
 
-    // Render page slots
-    local max_name_len = 48;
-    for (local i = 0; i < page_size; i++) {
-        local name_id = null;
-        local button_id = null;
+    // Update filter button label (keep red color)
+    local filter_label = this.GetTechFilterLabel(filter_vtype);
+    GSStoryPage.UpdateElement(ui.candidate_filter_btn, ui.candidate_nav_button_refs.filter_red, filter_label);
 
-        if (ui.rawin("engine_slots")) {
-            if (i >= ui.engine_slots.len()) break;
-            name_id = ui.engine_slots[i].name_id;
-            button_id = ui.engine_slots[i].button_id;
-        } else {
-            // Backward compatibility: layout v1 (should be rare; kept for safety)
-            name_id = ui.engine_name_ids[i];
-            button_id = ui.engine_button_ids[i];
+    // Update research candidate display
+    if (total_available == 0) {
+        // Empty state - gray button, empty text
+        GSStoryPage.UpdateElement(ui.candidate_vehicle_name, 0, GSText(GSText.STR_TECH_CANDIDATE_NAV_EMPTY));
+        GSStoryPage.UpdateElement(ui.candidate_details, 0, this.EmptyText());
+        GSStoryPage.UpdateElement(ui.candidate_research_btn, ui.candidate_nav_button_refs.research_ivld, this.EmptyText());
+        GSStoryPage.UpdateElement(ui.candidate_nav_index_info, 0, GSText(GSText.STR_TECH_CANDIDATE_NAV_INDEX, 0, 0));
+        // Disable navigation buttons (gray color)
+        GSStoryPage.UpdateElement(ui.candidate_nav_first_btn, ui.candidate_nav_button_refs.first_ivld, GSText(GSText.STR_TECH_QUEUE_NAV_FIRST));
+        GSStoryPage.UpdateElement(ui.candidate_nav_last_btn, ui.candidate_nav_button_refs.last_ivld, GSText(GSText.STR_TECH_QUEUE_NAV_LAST));
+        GSStoryPage.UpdateElement(ui.candidate_nav_prev_btn, ui.candidate_nav_button_refs.prev_ivld, GSText(GSText.STR_TECH_QUEUE_NAV_PREV));
+        GSStoryPage.UpdateElement(ui.candidate_nav_next_btn, ui.candidate_nav_button_refs.next_ivld, GSText(GSText.STR_TECH_QUEUE_NAV_NEXT));
+        // Clear button mapping
+        if (tech_advance.button_element_map.rawin(ui.candidate_research_btn)) {
+            delete tech_advance.button_element_map[ui.candidate_research_btn];
+        }
+    } else {
+        local current = available[ui.candidate_nav_index];
+        local is_first = (ui.candidate_nav_index == 0);
+        local is_last = (ui.candidate_nav_index == total_available - 1);
+
+        // Update vehicle name
+        GSStoryPage.UpdateElement(ui.candidate_vehicle_name, 0, GSText(GSText.STR_TECH_CANDIDATE_NAV_ITEM, current.name));
+
+        // Fetch vehicle details from GSEngine API
+        local vtype_name = "";
+        switch (current.vehicle_type) {
+            case GSVehicle.VT_RAIL:  vtype_name = "Railway"; break;
+            case GSVehicle.VT_ROAD:  vtype_name = "Road Vehicle"; break;
+            case GSVehicle.VT_WATER: vtype_name = "Ship"; break;
+            case GSVehicle.VT_AIR:   vtype_name = "Aircraft"; break;
         }
 
-        if (i < show_count) {
-            local entry = available[ui.offset + i];
-            local display_name = this.TruncateString(entry.name, max_name_len);
-            GSStoryPage.UpdateElement(name_id, 0, GSText(GSText.STR_TECH_ENGINE_ITEM, display_name));
-            GSStoryPage.UpdateElement(button_id, 0, GSText(GSText.STR_TECH_BUTTON_RESEARCH, cost_k));
-            tech_advance.button_element_map[button_id] <- { kind = "research", engine_id = entry.engine_id };
-        } else {
-            GSStoryPage.UpdateElement(name_id, 0, this.EmptyText());
-            GSStoryPage.UpdateElement(button_id, 0, this.EmptyText());
-            if (tech_advance.button_element_map.rawin(button_id)) delete tech_advance.button_element_map[button_id];
-        }
+        local max_speed = GSEngine.GetMaxSpeed(current.engine_id);
+        local capacity = GSEngine.GetCapacity(current.engine_id);
+        local price = GSEngine.GetPrice(current.engine_id);
+        local running_cost = GSEngine.GetRunningCost(current.engine_id);
+
+        // Update details with comprehensive information
+        GSStoryPage.UpdateElement(ui.candidate_details, 0,
+            GSText(GSText.STR_TECH_CANDIDATE_DETAILS,
+                vtype_name, max_speed, capacity, price, running_cost));
+
+        // Update research button (blue/available)
+        GSStoryPage.UpdateElement(ui.candidate_research_btn, ui.candidate_nav_button_refs.research_avai, GSText(GSText.STR_TECH_BUTTON_RESEARCH, cost_k));
+        tech_advance.button_element_map[ui.candidate_research_btn] <- { kind = "research", engine_id = current.engine_id };
+
+        // Update index display (e.g., "1 / 5")
+        GSStoryPage.UpdateElement(ui.candidate_nav_index_info, 0, GSText(GSText.STR_TECH_CANDIDATE_NAV_INDEX, ui.candidate_nav_index + 1, total_available));
+
+        // Update navigation buttons (gray when at boundary, green when available)
+        GSStoryPage.UpdateElement(ui.candidate_nav_first_btn,
+            is_first ? ui.candidate_nav_button_refs.first_ivld : ui.candidate_nav_button_refs.first_avai,
+            GSText(GSText.STR_TECH_QUEUE_NAV_FIRST));
+        GSStoryPage.UpdateElement(ui.candidate_nav_last_btn,
+            is_last ? ui.candidate_nav_button_refs.last_ivld : ui.candidate_nav_button_refs.last_avai,
+            GSText(GSText.STR_TECH_QUEUE_NAV_LAST));
+        GSStoryPage.UpdateElement(ui.candidate_nav_prev_btn,
+            is_first ? ui.candidate_nav_button_refs.prev_ivld : ui.candidate_nav_button_refs.prev_avai,
+            GSText(GSText.STR_TECH_QUEUE_NAV_PREV));
+        GSStoryPage.UpdateElement(ui.candidate_nav_next_btn,
+            is_last ? ui.candidate_nav_button_refs.next_ivld : ui.candidate_nav_button_refs.next_avai,
+            GSText(GSText.STR_TECH_QUEUE_NAV_NEXT));
     }
 
     // Footer
-    if (total_available == 0) {
-        GSStoryPage.UpdateElement(ui.footer_id, 0, GSText(GSText.STR_TECH_NO_AVAILABLE));
-    } else if (ui.offset + show_count < total_available) {
-        GSStoryPage.UpdateElement(ui.footer_id, 0, GSText(GSText.STR_TECH_MORE_AVAILABLE, total_available - (ui.offset + show_count)));
-    } else {
-        GSStoryPage.UpdateElement(ui.footer_id, 0, this.EmptyText());
-    }
+    GSStoryPage.UpdateElement(ui.footer_id, 0, this.EmptyText());
 }
 
 function StoryEditor::EmptyText()
@@ -421,6 +486,18 @@ function StoryEditor::GetTechFilterLabel(filter_vtype)
     }
 }
 
+function StoryEditor::CycleFilterVType(current_vtype)
+{
+    switch (current_vtype) {
+        case -1: return GSVehicle.VT_RAIL;
+        case GSVehicle.VT_RAIL: return GSVehicle.VT_ROAD;
+        case GSVehicle.VT_ROAD: return GSVehicle.VT_WATER;
+        case GSVehicle.VT_WATER: return GSVehicle.VT_AIR;
+        case GSVehicle.VT_AIR: return -1;
+        default: return -1;
+    }
+}
+
 function StoryEditor::ClearTechStoryPage(company, tech_advance)
 {
     if (company.sp_tech == null || !GSStoryPage.IsValidStoryPage(company.sp_tech)) return;
@@ -436,7 +513,7 @@ function StoryEditor::ClearTechStoryPage(company, tech_advance)
 
 function StoryEditor::EnsureTechUILayout(company, tech_advance)
 {
-    if (company.tech_ui_state != null && company.tech_ui_state.rawin("layout_version") && company.tech_ui_state.layout_version == 2) {
+    if (company.tech_ui_state != null && company.tech_ui_state.rawin("layout_version") && company.tech_ui_state.layout_version == 4) {
         return;
     }
 
@@ -445,59 +522,141 @@ function StoryEditor::EnsureTechUILayout(company, tech_advance)
 
     // Create button references with float flags
     local button_colour = GSStoryPage.SPBC_WHITE;
+    local button_colour_avai = GSStoryPage.SPBC_GREEN;
+    local button_colour_ivld = GSStoryPage.SPBC_WHITE;
     local ref_float_left = GSStoryPage.MakePushButtonReference(button_colour, GSStoryPage.SPBF_FLOAT_LEFT);
     local ref_float_right = GSStoryPage.MakePushButtonReference(button_colour, GSStoryPage.SPBF_FLOAT_RIGHT);
+    local ref_float_left_avai = GSStoryPage.MakePushButtonReference(button_colour_avai, GSStoryPage.SPBF_FLOAT_LEFT);
+    local ref_float_right_avai = GSStoryPage.MakePushButtonReference(button_colour_avai, GSStoryPage.SPBF_FLOAT_RIGHT);
+    local ref_float_left_ivld = GSStoryPage.MakePushButtonReference(button_colour_ivld, GSStoryPage.SPBF_FLOAT_LEFT);
+    local ref_float_right_ivld = GSStoryPage.MakePushButtonReference(button_colour_ivld, GSStoryPage.SPBF_FLOAT_RIGHT);
+    
+    // Create non-floating button references for filter and research buttons
+    local ref_red = GSStoryPage.MakePushButtonReference(GSStoryPage.SPBC_RED, 0);
+    local ref_blue = GSStoryPage.MakePushButtonReference(GSStoryPage.SPBC_DARK_BLUE, 0);
+    local ref_white = GSStoryPage.MakePushButtonReference(GSStoryPage.SPBC_WHITE, 0);
 
     local ui = {
-        layout_version = 2,
+        layout_version = 4,
         mode = "normal",
         filter_vtype = -1,
-        offset = 0,
-        page_size = 10,
-        queue_item_ids = [],
+        candidate_nav_index = 0,
+        queue_nav_index = 0,
         engine_slots = []
     };
 
     // Header
     ui.header_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
 
-    // Research queue area
-    ui.queue_header_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
-    for (local i = 0; i < 4; i++) {
-        ui.queue_item_ids.append(GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText()));
+    // Check initial queue state to set correct button colors
+    local queue_len = 0;
+    if (tech_advance.company_unlocks.rawin(company.id)) {
+        queue_len = tech_advance.company_unlocks[company.id].research_queue.len();
     }
-    ui.queue_more_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
 
-    // Controls row: filter + nav + status
-    // Filter buttons (float left)
-    local btn_all = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_left, GSText(GSText.STR_TECH_FILTER_ALL));
-    local btn_rail = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_left, GSText(GSText.STR_TECH_FILTER_RAIL));
-    local btn_road = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_left, GSText(GSText.STR_TECH_FILTER_ROAD));
-    local btn_water = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_left, GSText(GSText.STR_TECH_FILTER_WATER));
-    local btn_air = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_left, GSText(GSText.STR_TECH_FILTER_AIR));
-
-    tech_advance.button_element_map[btn_all] <- { kind = "filter", vtype = -1 };
-    tech_advance.button_element_map[btn_rail] <- { kind = "filter", vtype = GSVehicle.VT_RAIL };
-    tech_advance.button_element_map[btn_road] <- { kind = "filter", vtype = GSVehicle.VT_ROAD };
-    tech_advance.button_element_map[btn_water] <- { kind = "filter", vtype = GSVehicle.VT_WATER };
-    tech_advance.button_element_map[btn_air] <- { kind = "filter", vtype = GSVehicle.VT_AIR };
-
-    // Navigation buttons (float right)
-    ui.nav_prev_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_right, GSText(GSText.STR_TECH_BUTTON_PREV));
-    ui.nav_next_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_right, GSText(GSText.STR_TECH_BUTTON_NEXT));
-    tech_advance.button_element_map[ui.nav_prev_id] <- { kind = "nav", delta = -1 };
-    tech_advance.button_element_map[ui.nav_next_id] <- { kind = "nav", delta = 1 };
-
-    // Status (anchor paragraph for floated controls)
-    ui.status_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
-
-    // Engine list slots (fixed)
-    for (local i = 0; i < ui.page_size; i++) {
-        // Button floats right relative to the following paragraph (engine name)
-        local button_id = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_float_right, this.EmptyText());
-        local name_id = GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
-        ui.engine_slots.append({ name_id = name_id, button_id = button_id });
+    // Determine initial button colors based on queue state
+    local init_first_ref, init_last_ref, init_prev_ref, init_next_ref;
+    if (queue_len == 0) {
+        // Empty queue: all buttons gray
+        init_first_ref = ref_float_left_ivld;
+        init_last_ref = ref_float_right_ivld;
+        init_prev_ref = ref_float_left_ivld;
+        init_next_ref = ref_float_right_ivld;
+    } else if (queue_len == 1) {
+        // Single item: all buttons gray (can't navigate)
+        init_first_ref = ref_float_left_ivld;
+        init_last_ref = ref_float_right_ivld;
+        init_prev_ref = ref_float_left_ivld;
+        init_next_ref = ref_float_right_ivld;
+    } else {
+        // Multiple items, index=0: First/Prev gray, Last/Next green
+        init_first_ref = ref_float_left_ivld;
+        init_last_ref = ref_float_right_avai;
+        init_prev_ref = ref_float_left_ivld;
+        init_next_ref = ref_float_right_avai;
     }
+
+    // Research queue navigation area (new layout)
+    // Row 1: Header + Quick jump buttons
+    ui.queue_nav_first_btn <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, init_first_ref, GSText(GSText.STR_TECH_QUEUE_NAV_FIRST));
+    ui.queue_nav_last_btn <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, init_last_ref, GSText(GSText.STR_TECH_QUEUE_NAV_LAST));
+    ui.queue_nav_header_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, GSText(GSText.STR_TECH_QUEUE_NAV_HEADER));
+
+    // Row 2: Navigation buttons + Current item info
+    ui.queue_nav_prev_btn <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, init_prev_ref, GSText(GSText.STR_TECH_QUEUE_NAV_PREV));
+    ui.queue_nav_next_btn <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, init_next_ref, GSText(GSText.STR_TECH_QUEUE_NAV_NEXT));
+    ui.queue_nav_item_info <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+
+    // Row 3: Progress details
+    ui.queue_nav_progress <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+
+    // Store button reference IDs for color switching
+    ui.queue_nav_button_refs <- {
+        first_avai = ref_float_left_avai,
+        first_ivld = ref_float_left_ivld,
+        last_avai = ref_float_right_avai,
+        last_ivld = ref_float_right_ivld,
+        prev_avai = ref_float_left_avai,
+        prev_ivld = ref_float_left_ivld,
+        next_avai = ref_float_right_avai,
+        next_ivld = ref_float_right_ivld
+    };
+
+    // Register queue navigation buttons
+    tech_advance.button_element_map[ui.queue_nav_first_btn] <- { kind = "queue_nav", action = "first" };
+    tech_advance.button_element_map[ui.queue_nav_last_btn] <- { kind = "queue_nav", action = "last" };
+    tech_advance.button_element_map[ui.queue_nav_prev_btn] <- { kind = "queue_nav", action = "prev" };
+    tech_advance.button_element_map[ui.queue_nav_next_btn] <- { kind = "queue_nav", action = "next" };
+
+    // Research candidate navigation
+    ui.candidate_nav_separator <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, GSText(GSText.STR_SEPARATOR));
+    ui.candidate_nav_header <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, GSText(GSText.STR_TECH_CANDIDATE_NAV_HEADER));
+
+    // Vehicle type statistics
+    ui.candidate_type_stats_rail <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+    ui.candidate_type_stats_road <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+    ui.candidate_type_stats_water <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+    ui.candidate_type_stats_air <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+
+    // Filter toggle button (red, non-floating, always enabled)
+    ui.candidate_filter_btn <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_red, this.EmptyText());
+    tech_advance.button_element_map[ui.candidate_filter_btn] <- { kind = "filter_toggle" };
+
+    // Index info and First/Last buttons
+    ui.candidate_nav_first_btn <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, init_first_ref, GSText(GSText.STR_TECH_QUEUE_NAV_FIRST));
+    ui.candidate_nav_last_btn <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, init_last_ref, GSText(GSText.STR_TECH_QUEUE_NAV_LAST));
+    ui.candidate_nav_index_info <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+    tech_advance.button_element_map[ui.candidate_nav_first_btn] <- { kind = "candidate_nav", action = "first" };
+    tech_advance.button_element_map[ui.candidate_nav_last_btn] <- { kind = "candidate_nav", action = "last" };
+
+    // Vehicle name and Prev/Next buttons
+    ui.candidate_nav_prev_btn <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, init_prev_ref, GSText(GSText.STR_TECH_QUEUE_NAV_PREV));
+    ui.candidate_nav_next_btn <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, init_next_ref, GSText(GSText.STR_TECH_QUEUE_NAV_NEXT));
+    ui.candidate_vehicle_name <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+    tech_advance.button_element_map[ui.candidate_nav_prev_btn] <- { kind = "candidate_nav", action = "prev" };
+    tech_advance.button_element_map[ui.candidate_nav_next_btn] <- { kind = "candidate_nav", action = "next" };
+
+    // Vehicle details
+    ui.candidate_details <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+
+    // Research button (white when invalid, blue when available, non-floating)
+    ui.candidate_research_btn <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_white, this.EmptyText());
+    tech_advance.button_element_map[ui.candidate_research_btn] <- { kind = "research", engine_id = -1 };
+
+    // Store button reference IDs for color switching (candidate navigation)
+    ui.candidate_nav_button_refs <- {
+        first_avai = ref_float_left_avai,
+        first_ivld = ref_float_left_ivld,
+        last_avai = ref_float_right_avai,
+        last_ivld = ref_float_right_ivld,
+        prev_avai = ref_float_left_avai,
+        prev_ivld = ref_float_left_ivld,
+        next_avai = ref_float_right_avai,
+        next_ivld = ref_float_right_ivld,
+        research_avai = ref_blue,
+        research_ivld = ref_white,
+        filter_red = ref_red
+    };
 
     // Footer
     ui.footer_id <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
