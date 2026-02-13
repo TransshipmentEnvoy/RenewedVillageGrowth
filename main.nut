@@ -404,10 +404,10 @@ function MainClass::HandleEvents()
                                             ui.queue_nav_index = queue_len - 1;
                                             break;
                                         case "prev":
-                                            ui.queue_nav_index = (ui.queue_nav_index - 1 + queue_len) % queue_len;
+                                            if (ui.queue_nav_index > 0) ui.queue_nav_index--;
                                             break;
                                         case "next":
-                                            ui.queue_nav_index = (ui.queue_nav_index + 1) % queue_len;
+                                            if (ui.queue_nav_index < queue_len - 1) ui.queue_nav_index++;
                                             break;
                                     }
                                 }
