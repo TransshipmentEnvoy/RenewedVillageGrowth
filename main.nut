@@ -333,18 +333,6 @@ function MainClass::HandleEvents()
                                 success = this.tech_advance.StartResearch(company_id, action.engine_id);
                             }
                             break;
-                        case "nav":
-                            if (company.tech_ui_state != null && action.rawin("delta")) {
-                                local page_size = company.tech_ui_state.rawin("page_size") ? company.tech_ui_state.page_size : 10;
-                                company.tech_ui_state.offset += action.delta * page_size;
-                            }
-                            break;
-                        case "filter":
-                            if (company.tech_ui_state != null && action.rawin("vtype")) {
-                                company.tech_ui_state.filter_vtype = action.vtype;
-                                company.tech_ui_state.offset = 0;
-                            }
-                            break;
                         case "filter_toggle":
                             if (company.tech_ui_state != null) {
                                 company.tech_ui_state.filter_vtype = this.story_editor.CycleFilterVType(company.tech_ui_state.filter_vtype);
