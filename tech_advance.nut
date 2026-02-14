@@ -3,6 +3,7 @@ Log <- SuperLib.Log;
 
 class TechAdvance {
     engine_data = null;           // Table: engine_id -> {name, intro_date, expire_date, vehicle_type}
+    name_to_ids = null;           // Table: composite_key (name|vtype|intro_date) -> [engine_id, ...]
     company_unlocks = null;       // Table: company_id -> {unlocked_engines, research_queue}
     game_start_date = null;       // Game start date for auto-unlocking historical vehicles
     last_check_year = null;       // Last year we checked for new available engines
@@ -27,6 +28,7 @@ class TechAdvance {
         GSGameSettings.SetValue("vehicle.no_expire_vehicles_after", 0);
         
         this.engine_data = {};
+        this.name_to_ids = {};
         this.company_unlocks = {};
         this.button_element_map = {};
         this.game_start_date = GSDate.GetCurrentDate();
@@ -55,14 +57,23 @@ function TechAdvance::LoadEngineData() {
         local engine_list = GSEngineList(vtype);
         foreach (engine_id, _ in engine_list) {
             if (GSEngine.IsValidEngine(engine_id)) {
+                local name = GSEngine.GetName(engine_id);
                 local intro_date = GSEngine.GetDesignDate(engine_id);
+                local vehicle_type = GSEngine.GetVehicleType(engine_id);
                 
                 // Store engine metadata
                 this.engine_data[engine_id] <- {
-                    name = GSEngine.GetName(engine_id),
+                    name = name,
                     intro_date = intro_date,
-                    vehicle_type = GSEngine.GetVehicleType(engine_id)
+                    vehicle_type = vehicle_type
                 };
+                
+                // Build name-to-IDs mapping (composite key: "name|vehicle_type|intro_date")
+                local composite_key = name + "|" + vehicle_type + "|" + intro_date;
+                if (!this.name_to_ids.rawin(composite_key)) {
+                    this.name_to_ids[composite_key] <- [];
+                }
+                this.name_to_ids[composite_key].append(engine_id);
             }
         }
     }
@@ -78,15 +89,16 @@ function TechAdvance::UpdateCompanyList() {
             
             // Initialize company unlock data
             this.company_unlocks[c] <- {
-                unlocked_engines = {},    // Table: engine_id -> true
-                research_queue = [],      // Array of {engine_id, progress}
+                unlocked_engines = {},    // Table: composite_key (name|vtype|intro_date) -> true
+                research_queue = [],      // Array of {composite_key, progress}
                 available_counts = null   // Cached: {total, rail, road, water, air, filtered[]}
             };
             
             // Auto-unlock historical vehicles (intro_date < game_start or intro_date == 0)
             foreach (engine_id, engine_info in this.engine_data) {
                 if (engine_info.intro_date < this.game_start_date || engine_info.intro_date == 0) {
-                    this.company_unlocks[c].unlocked_engines[engine_id] <- true;
+                    local composite_key = engine_info.name + "|" + engine_info.vehicle_type + "|" + engine_info.intro_date;
+                    this.company_unlocks[c].unlocked_engines[composite_key] <- true;
                 }
             }
             
@@ -124,13 +136,19 @@ function TechAdvance::ApplyEngineRestrictions(company_id) {
     local async = GSAsyncMode(true);
     
     local unlocked = this.company_unlocks[company_id].unlocked_engines;
-    foreach (engine_id, _ in this.engine_data) {
-        if (unlocked.rawin(engine_id)) {
-            // Enable unlocked engines
-            GSEngine.EnableForCompany(engine_id, company_id);
-        } else {
-            // Disable locked engines
-            GSEngine.DisableForCompany(engine_id, company_id);
+    
+    // Iterate through all composite_keys (unique engine name|vtype|intro_date combinations)
+    // Enable unlocked engines, disable locked engines
+    foreach (composite_key, engine_ids in this.name_to_ids) {
+        local is_unlocked = unlocked.rawin(composite_key);
+        
+        // Apply restriction to all engine variants with this name|vtype|intro_date
+        foreach (engine_id in engine_ids) {
+            if (is_unlocked) {
+                GSEngine.EnableForCompany(engine_id, company_id);
+            } else {
+                GSEngine.DisableForCompany(engine_id, company_id);
+            }
         }
     }
     
@@ -146,10 +164,10 @@ function TechAdvance::UpdateAvailableCounts(company_id) {
     local company_data = this.company_unlocks[company_id];
     local current_date = GSDate.GetCurrentDate();
 
-    // Build researching engines set
+    // Build researching engines set (by composite_key)
     local researching_engines = {};
     foreach (item in company_data.research_queue) {
-        researching_engines[item.engine_id] <- true;
+        researching_engines[item.composite_key] <- true;
     }
 
     // Count available engines per vehicle type
@@ -159,19 +177,32 @@ function TechAdvance::UpdateAvailableCounts(company_id) {
         road = 0,
         water = 0,
         air = 0,
-        filtered = []  // Array to store actual available engine_ids in sorted order
+        filtered = []  // Array to store unique composite_keys with representative engine_id
     };
 
-    foreach (engine_id, engine_info in this.engine_data) {
+    // Iterate through name_to_ids (already organized by composite_key, naturally deduplicated)
+    foreach (composite_key, engine_ids in this.name_to_ids) {
+        // Use first engine variant as representative
+        if (engine_ids.len() == 0) continue;
+        local representative_id = engine_ids[0];
+        
+        if (!this.engine_data.rawin(representative_id)) continue;
+        local engine_info = this.engine_data[representative_id];
+        
         // Skip if not yet introduced
         if (engine_info.intro_date > 0 && engine_info.intro_date > current_date) continue;
-        // Skip if already unlocked
-        if (company_data.unlocked_engines.rawin(engine_id)) continue;
-        // Skip if currently being researched
-        if (researching_engines.rawin(engine_id)) continue;
+        // Skip if already unlocked (check by composite_key)
+        if (company_data.unlocked_engines.rawin(composite_key)) continue;
+        // Skip if currently being researched (check by composite_key)
+        if (researching_engines.rawin(composite_key)) continue;
 
         counts.total++;
-        counts.filtered.append({ engine_id = engine_id, intro_date = engine_info.intro_date, name = engine_info.name, vehicle_type = engine_info.vehicle_type });
+        counts.filtered.append({ 
+            engine_id = representative_id, 
+            intro_date = engine_info.intro_date, 
+            name = engine_info.name, 
+            vehicle_type = engine_info.vehicle_type 
+        });
 
         switch (engine_info.vehicle_type) {
             case GSVehicle.VT_RAIL: counts.rail++; break;
@@ -193,15 +224,15 @@ function TechAdvance::UpdateAvailableCounts(company_id) {
     company_data.available_counts = counts;
 }
 
-function TechAdvance::StartResearch(company_id, engine_id) {
-    // Validate company and engine
+function TechAdvance::StartResearch(company_id, composite_key) {
+    // Validate company and composite_key
     if (GSCompany.ResolveCompanyID(company_id) == GSCompany.COMPANY_INVALID) {
         Log.Warning("TechAdvance: Invalid company " + company_id + " trying to research");
         return false;
     }
     
-    if (!this.engine_data.rawin(engine_id)) {
-        Log.Warning("TechAdvance: Invalid engine " + engine_id + " requested for research");
+    if (!this.name_to_ids.rawin(composite_key)) {
+        Log.Warning("TechAdvance: Invalid composite_key \"" + composite_key + "\" requested for research");
         return false;
     }
     
@@ -213,15 +244,15 @@ function TechAdvance::StartResearch(company_id, engine_id) {
     local company_data = this.company_unlocks[company_id];
     
     // Check if already unlocked
-    if (company_data.unlocked_engines.rawin(engine_id)) {
-        Log.Info("TechAdvance: Engine " + engine_id + " already unlocked for company " + company_id, Log.LVL_DEBUG);
+    if (company_data.unlocked_engines.rawin(composite_key)) {
+        Log.Info("TechAdvance: Engine \"" + composite_key + "\" already unlocked for company " + company_id, Log.LVL_DEBUG);
         return false;
     }
     
     // Check if already in research queue
     foreach (item in company_data.research_queue) {
-        if (item.engine_id == engine_id) {
-            Log.Info("TechAdvance: Engine " + engine_id + " already in research queue", Log.LVL_DEBUG);
+        if (item.composite_key == composite_key) {
+            Log.Info("TechAdvance: Engine \"" + composite_key + "\" already in research queue", Log.LVL_DEBUG);
             return false;
         }
     }
@@ -242,18 +273,25 @@ function TechAdvance::StartResearch(company_id, engine_id) {
     
     // Add to research queue
     company_data.research_queue.append({
-        engine_id = engine_id,
+        composite_key = composite_key,
         progress = RESEARCH_DURATION
     });
     
-    Log.Info("TechAdvance: Company " + company_id + " started researching engine " + engine_id + " (" + 
-             this.engine_data[engine_id].name + ")", Log.LVL_INFO);
+    // Get engine name for logging (use first variant)
+    local engine_ids = this.name_to_ids[composite_key];
+    local engine_name = (engine_ids.len() > 0) ? this.engine_data[engine_ids[0]].name : composite_key;
+    
+    Log.Info("TechAdvance: Company " + company_id + " started researching \"" + engine_name + 
+             "\" (" + engine_ids.len() + " variants)", Log.LVL_INFO);
     
     return true;
 }
 
 function TechAdvance::ProcessResearch() {
     // Process research queue for all companies
+    // Returns: array of company IDs that completed at least one research
+    local companies_with_completed = [];
+    
     foreach (company_id, company_data in this.company_unlocks) {
         if (company_data.research_queue.len() == 0) continue;
         
@@ -268,12 +306,25 @@ function TechAdvance::ProcessResearch() {
             if (item.progress <= 0) {
                 completed_indices.append(i);
                 
-                // Unlock the engine (synchronous to ensure immediate effect)
-                company_data.unlocked_engines[item.engine_id] <- true;
-                GSEngine.EnableForCompany(item.engine_id, company_id);
+                // Unlock the engine (by composite_key)
+                company_data.unlocked_engines[item.composite_key] <- true;
                 
-                Log.Info("TechAdvance: Company " + company_id + " completed research for engine " + 
-                         item.engine_id + " (" + this.engine_data[item.engine_id].name + ")", Log.LVL_INFO);
+                // Enable all engine variants with this name|vtype
+                if (this.name_to_ids.rawin(item.composite_key)) {
+                    foreach (engine_id in this.name_to_ids[item.composite_key]) {
+                        GSEngine.EnableForCompany(engine_id, company_id);
+                    }
+                    
+                    // Log completion (use first variant for display)
+                    local engine_ids = this.name_to_ids[item.composite_key];
+                    if (engine_ids.len() > 0) {
+                        local sample_id = engine_ids[0];
+                        Log.Info("TechAdvance: Company " + company_id + " completed research: " + 
+                                 this.engine_data[sample_id].name + " (" + engine_ids.len() + " variants)", Log.LVL_INFO);
+                    }
+                } else {
+                    Log.Warning("TechAdvance: Completed research for missing engine: " + item.composite_key);
+                }
             }
         }
         
@@ -282,7 +333,14 @@ function TechAdvance::ProcessResearch() {
         foreach (index in completed_indices) {
             company_data.research_queue.remove(index);
         }
+        
+        // Track companies that completed research
+        if (completed_indices.len() > 0) {
+            companies_with_completed.append(company_id);
+        }
     }
+    
+    return companies_with_completed;
 }
 
 function TechAdvance::CheckNewAvailableEngines() {
@@ -313,7 +371,7 @@ function TechAdvance::CheckNewAvailableEngines() {
 
 function TechAdvance::HandleUnlockButton(company_id, element_id) {
     // Handle button click from story page
-    // Map element_id back to engine_id (research actions only)
+    // Map element_id back to composite_key (research actions only)
     if (!this.button_element_map.rawin(element_id)) {
         Log.Warning("TechAdvance: Unknown element_id " + element_id + " clicked");
         return false;
@@ -321,8 +379,8 @@ function TechAdvance::HandleUnlockButton(company_id, element_id) {
     
     local action = this.button_element_map[element_id];
     if (typeof(action) != "table" || !action.rawin("kind")) return false;
-    if (action.kind != "research" || !action.rawin("engine_id")) return false;
-    return this.StartResearch(company_id, action.engine_id);
+    if (action.kind != "research" || !action.rawin("composite_key")) return false;
+    return this.StartResearch(company_id, action.composite_key);
 }
 
 function TechAdvance::Manage() {
@@ -331,14 +389,31 @@ function TechAdvance::Manage() {
     local month = GSDate.GetMonth(date);
     if (month != this.current_month) {
         // Process ongoing research (monthly)
-        this.ProcessResearch();
+        local companies_completed = this.ProcessResearch();
         
-        // Update tech pages monthly (to show research progress)
+        // Update tech pages monthly
         if (this.story_editor != null && this.companies != null) {
+            // Build set of companies that need updates
+            local companies_to_update = {};
+            
+            // 1. Update companies with active research (to show progress)
             foreach (company in this.companies) {
                 if (!this.company_unlocks.rawin(company.id)) continue;
-                if (this.company_unlocks[company.id].research_queue.len() == 0) continue;
-                this.story_editor.UpdateTechPage(company, this);
+                if (this.company_unlocks[company.id].research_queue.len() > 0) {
+                    companies_to_update[company.id] <- true;
+                }
+            }
+            
+            // 2. Also update companies that completed research (to refresh available engines)
+            foreach (company_id in companies_completed) {
+                companies_to_update[company_id] <- true;
+            }
+            
+            // Perform updates
+            foreach (company in this.companies) {
+                if (companies_to_update.rawin(company.id)) {
+                    this.story_editor.UpdateTechPage(company, this);
+                }
             }
         }
         this.current_month = month;
@@ -380,20 +455,20 @@ function TechAdvance::Save() {
     // Save company unlock data
     foreach (company_id, company_data in this.company_unlocks) {
         save_data.company_unlocks[company_id] <- {
-            unlocked_engines = {},
+            unlocked_engines = [],        // Array of composite_keys
             research_queue = [],
             available_counts = null
         };
         
-        // Save unlocked engines
-        foreach (engine_id, _ in company_data.unlocked_engines) {
-            save_data.company_unlocks[company_id].unlocked_engines[engine_id] <- true;
+        // Save unlocked engines as array of composite_keys
+        foreach (composite_key, _ in company_data.unlocked_engines) {
+            save_data.company_unlocks[company_id].unlocked_engines.append(composite_key);
         }
         
-        // Save research queue
+        // Save research queue with composite_keys
         foreach (item in company_data.research_queue) {
             save_data.company_unlocks[company_id].research_queue.append({
-                engine_id = item.engine_id,
+                composite_key = item.composite_key,
                 progress = item.progress
             });
         }
@@ -424,20 +499,28 @@ function TechAdvance::Load(saved_data) {
             available_counts = null
         };
         
-        // Restore unlocked engines
-        foreach (engine_id, _ in company_data.unlocked_engines) {
-            this.company_unlocks[company_id].unlocked_engines[engine_id] <- true;
+        // Restore unlocked engines (validate composite_keys exist in current NewGRF)
+        foreach (composite_key in company_data.unlocked_engines) {
+            if (this.name_to_ids.rawin(composite_key)) {
+                this.company_unlocks[company_id].unlocked_engines[composite_key] <- true;
+            } else {
+                Log.Warning("TechAdvance: Saved unlocked engine not found in current NewGRF: " + composite_key);
+            }
         }
         
-        // Restore research queue
+        // Restore research queue (validate composite_keys exist in current NewGRF)
         foreach (item in company_data.research_queue) {
-            this.company_unlocks[company_id].research_queue.append({
-                engine_id = item.engine_id,
-                progress = item.progress
-            });
+            if (this.name_to_ids.rawin(item.composite_key)) {
+                this.company_unlocks[company_id].research_queue.append({
+                    composite_key = item.composite_key,
+                    progress = item.progress
+                });
+            } else {
+                Log.Warning("TechAdvance: Saved research item not found in current NewGRF: " + item.composite_key);
+            }
         }
         
-        // Reapply engine restrictions after loading
+        // Reapply engine restrictions after loading (important!)
         this.ApplyEngineRestrictions(company_id);
     }
     

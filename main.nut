@@ -329,8 +329,8 @@ function MainClass::HandleEvents()
                 if (typeof(action) == "table" && action.rawin("kind")) {
                     switch (action.kind) {
                         case "research":
-                            if (action.rawin("engine_id")) {
-                                success = this.tech_advance.StartResearch(company_id, action.engine_id);
+                            if (action.rawin("composite_key")) {
+                                success = this.tech_advance.StartResearch(company_id, action.composite_key);
                             }
                             break;
                         case "filter_toggle":

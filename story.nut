@@ -317,18 +317,31 @@ function StoryEditor::UpdateTechPage(company, tech_advance)
 
         // Display current item information
         local item = company_data.research_queue[ui.queue_nav_index];
-        local engine_info = tech_advance.engine_data[item.engine_id];
-        local current_num = ui.queue_nav_index + 1;  // 1-based display
+        // Get first engine variant for display (composite_key -> engine_id)
+        local sample_engine_id = null;
+        if (tech_advance.name_to_ids.rawin(item.composite_key)) {
+            local engine_ids = tech_advance.name_to_ids[item.composite_key];
+            if (engine_ids.len() > 0) sample_engine_id = engine_ids[0];
+        }
+        
+        if (sample_engine_id != null && tech_advance.engine_data.rawin(sample_engine_id)) {
+            local engine_info = tech_advance.engine_data[sample_engine_id];
+            local current_num = ui.queue_nav_index + 1;  // 1-based display
 
-        GSStoryPage.UpdateElement(ui.queue_nav_item_info, 0,
-            GSText(GSText.STR_TECH_QUEUE_NAV_ITEM, engine_info.name, current_num, queue_len));
+            GSStoryPage.UpdateElement(ui.queue_nav_item_info, 0,
+                GSText(GSText.STR_TECH_QUEUE_NAV_ITEM, engine_info.name, current_num, queue_len));
 
-        // Display progress
-        local progress_percent = 100 - ((item.progress * 100) / tech_advance.RESEARCH_DURATION);
-        local months_remaining = item.progress;
+            // Display progress
+            local progress_percent = 100 - ((item.progress * 100) / tech_advance.RESEARCH_DURATION);
+            local months_remaining = item.progress;
 
-        GSStoryPage.UpdateElement(ui.queue_nav_progress, 0,
-            GSText(GSText.STR_TECH_QUEUE_NAV_PROGRESS, progress_percent, months_remaining));
+            GSStoryPage.UpdateElement(ui.queue_nav_progress, 0,
+                GSText(GSText.STR_TECH_QUEUE_NAV_PROGRESS, progress_percent, months_remaining));
+        } else {
+            Log.Warning("StoryEditor: Research queue item has invalid composite_key: " + item.composite_key);
+            GSStoryPage.UpdateElement(ui.queue_nav_item_info, 0, this.EmptyText());
+            GSStoryPage.UpdateElement(ui.queue_nav_progress, 0, this.EmptyText());
+        }
     }
 
     // Update available counts cache
@@ -361,24 +374,33 @@ function StoryEditor::UpdateTechPage(company, tech_advance)
     local counts = company_data.available_counts;
     local unlocked_rail = 0, unlocked_road = 0, unlocked_water = 0, unlocked_air = 0;
     local total_rail = 0, total_road = 0, total_water = 0, total_air = 0;
+    
+    // Use a set to track unique composite_keys we've already counted
+    local counted_keys = {};
 
     foreach (engine_id, engine_info in tech_advance.engine_data) {
+        local composite_key = engine_info.name + "|" + engine_info.vehicle_type + "|" + engine_info.intro_date;
+        
+        // Skip if we've already counted this composite_key (avoid counting variants multiple times)
+        if (counted_keys.rawin(composite_key)) continue;
+        counted_keys[composite_key] <- true;
+        
         switch (engine_info.vehicle_type) {
             case GSVehicle.VT_RAIL:
                 total_rail++;
-                if (company_data.unlocked_engines.rawin(engine_id)) unlocked_rail++;
+                if (company_data.unlocked_engines.rawin(composite_key)) unlocked_rail++;
                 break;
             case GSVehicle.VT_ROAD:
                 total_road++;
-                if (company_data.unlocked_engines.rawin(engine_id)) unlocked_road++;
+                if (company_data.unlocked_engines.rawin(composite_key)) unlocked_road++;
                 break;
             case GSVehicle.VT_WATER:
                 total_water++;
-                if (company_data.unlocked_engines.rawin(engine_id)) unlocked_water++;
+                if (company_data.unlocked_engines.rawin(composite_key)) unlocked_water++;
                 break;
             case GSVehicle.VT_AIR:
                 total_air++;
-                if (company_data.unlocked_engines.rawin(engine_id)) unlocked_air++;
+                if (company_data.unlocked_engines.rawin(composite_key)) unlocked_air++;
                 break;
         }
     }
@@ -437,7 +459,8 @@ function StoryEditor::UpdateTechPage(company, tech_advance)
 
         // Update research button (blue/available)
         GSStoryPage.UpdateElement(ui.candidate_research_btn, ui.candidate_nav_button_refs.research_avai, GSText(GSText.STR_TECH_BUTTON_RESEARCH, cost_k));
-        tech_advance.button_element_map[ui.candidate_research_btn] <- { kind = "research", engine_id = current.engine_id };
+        local composite_key = current.name + "|" + current.vehicle_type + "|" + current.intro_date;
+        tech_advance.button_element_map[ui.candidate_research_btn] <- { kind = "research", composite_key = composite_key };
 
         // Update index display (e.g., "1 / 5")
         GSStoryPage.UpdateElement(ui.candidate_nav_index_info, 0, GSText(GSText.STR_TECH_CANDIDATE_NAV_INDEX, ui.candidate_nav_index + 1, total_available));
@@ -641,7 +664,7 @@ function StoryEditor::EnsureTechUILayout(company, tech_advance)
 
     // Research button (white when invalid, blue when available, non-floating)
     ui.candidate_research_btn <- GSStoryPage.NewElement(company.sp_tech, GSStoryPage.SPET_BUTTON_PUSH, ref_white, this.EmptyText());
-    tech_advance.button_element_map[ui.candidate_research_btn] <- { kind = "research", engine_id = -1 };
+    tech_advance.button_element_map[ui.candidate_research_btn] <- { kind = "research", composite_key = "" };
 
     // Store button reference IDs for color switching (candidate navigation)
     ui.candidate_nav_button_refs <- {
