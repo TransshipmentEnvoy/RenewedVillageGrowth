@@ -575,6 +575,11 @@ function MainClass::OnCompanyExemptionRequested(company_id)
     foreach (company in this.companies) {
         if (company.id == company_id) {
             company.SetExempted(true);
+            
+            // Immediately apply date-based engine unlocking for tech_advance
+            if (this.tech_advance != null) {
+                this.tech_advance.UnlockEngineByDate(company_id);
+            }
             return;
         }
     }

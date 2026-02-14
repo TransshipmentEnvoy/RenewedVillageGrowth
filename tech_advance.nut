@@ -94,16 +94,22 @@ function TechAdvance::UpdateCompanyList() {
                 available_counts = null   // Cached: {total, rail, road, water, air, filtered[]}
             };
             
-            // Auto-unlock historical vehicles (intro_date < game_start or intro_date == 0)
-            foreach (engine_id, engine_info in this.engine_data) {
-                if (engine_info.intro_date < this.game_start_date || engine_info.intro_date == 0) {
-                    local composite_key = engine_info.name + "|" + engine_info.vehicle_type + "|" + engine_info.intro_date;
-                    this.company_unlocks[c].unlocked_engines[composite_key] <- true;
+            // Check if company is exempted - use date-based unlocking instead
+            if (GSToyLib.IsExemptedAI(c)) {
+                Log.Info("TechAdvance: Company " + c + " is exempted, using date-based unlock", Log.LVL_INFO);
+                this.UnlockEngineByDate(c);
+            } else {
+                // Auto-unlock historical vehicles (intro_date < game_start or intro_date == 0)
+                foreach (engine_id, engine_info in this.engine_data) {
+                    if (engine_info.intro_date < this.game_start_date || engine_info.intro_date == 0) {
+                        local composite_key = engine_info.name + "|" + engine_info.vehicle_type + "|" + engine_info.intro_date;
+                        this.company_unlocks[c].unlocked_engines[composite_key] <- true;
+                    }
                 }
+                
+                // Apply engine restrictions for this new company
+                this.ApplyEngineRestrictions(c);
             }
-            
-            // Apply engine restrictions for this new company
-            this.ApplyEngineRestrictions(c);
         }
     }
     
@@ -156,6 +162,48 @@ function TechAdvance::ApplyEngineRestrictions(company_id) {
     async = null;
     
     Log.Info("TechAdvance: Applied restrictions for " + this.engine_data.len() + " engines", Log.LVL_DEBUG);
+}
+
+function TechAdvance::UnlockEngineByDate(company_id) {
+    // Enable engines based on introduction date for exempted companies
+    // Called monthly to unlock newly-introduced vehicles
+    
+    if (GSCompany.ResolveCompanyID(company_id) == GSCompany.COMPANY_INVALID) return;
+    
+    local current_date = GSDate.GetCurrentDate();
+    local enabled_count = 0;
+    
+    // Use AsyncMode for batch operations
+    local async = GSAsyncMode(true);
+    
+    // Iterate through all composite_keys and enable vehicles where intro_date <= current_date
+    foreach (composite_key, engine_ids in this.name_to_ids) {
+        if (engine_ids.len() == 0) continue;
+        
+        // Get engine info from first variant
+        local representative_id = engine_ids[0];
+        if (!this.engine_data.rawin(representative_id)) continue;
+        local engine_info = this.engine_data[representative_id];
+        
+        // Enable if intro_date has passed or is 0 (always available)
+        local should_enable = (engine_info.intro_date == 0 || engine_info.intro_date <= current_date);
+        
+        // Apply to all engine variants with this composite_key
+        foreach (engine_id in engine_ids) {
+            if (should_enable) {
+                GSEngine.EnableForCompany(engine_id, company_id);
+                enabled_count++;
+            } else {
+                GSEngine.DisableForCompany(engine_id, company_id);
+            }
+        }
+    }
+    
+    // Destroy async mode instance
+    async = null;
+    
+    Log.Info("TechAdvance: UnlockEngineByDate for exempted company " + company_id + 
+             ", enabled " + enabled_count + " engine variants", Log.LVL_DEBUG);
 }
 
 function TechAdvance::UpdateAvailableCounts(company_id) {
@@ -391,6 +439,15 @@ function TechAdvance::Manage() {
         // Process ongoing research (monthly)
         local companies_completed = this.ProcessResearch();
         
+        // Update exempted companies with date-based unlocking (monthly)
+        if (this.companies != null) {
+            foreach (company in this.companies) {
+                if (company.is_exempted) {
+                    this.UnlockEngineByDate(company.id);
+                }
+            }
+        }
+        
         // Update tech pages monthly
         if (this.story_editor != null && this.companies != null) {
             // Build set of companies that need updates
@@ -521,7 +578,12 @@ function TechAdvance::Load(saved_data) {
         }
         
         // Reapply engine restrictions after loading (important!)
-        this.ApplyEngineRestrictions(company_id);
+        // Use date-based unlocking for exempted companies
+        if (GSToyLib.IsExemptedAI(company_id)) {
+            this.UnlockEngineByDate(company_id);
+        } else {
+            this.ApplyEngineRestrictions(company_id);
+        }
     }
     
     Log.Info("TechAdvance: Loaded data for " + this.company_unlocks.len() + " companies", Log.LVL_INFO);
