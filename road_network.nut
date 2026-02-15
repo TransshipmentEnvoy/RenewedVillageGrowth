@@ -895,21 +895,49 @@ function RoadNetwork::Save() {
         save_data.major_cities_list.append(town_id);
     }
     
-    // Save edge statuses and build states
-    save_data.edge_statuses <- [];
-    save_data.edge_build_states <- [];
+    // Save full edge data for build_queue to preserve progress
+    save_data.build_queue_data <- [];
     foreach (edge in this.build_queue) {
-        save_data.edge_statuses.append(edge.status);
-        // Save build_state if exists, otherwise default to PENDING
-        if ("build_state" in edge) {
-            save_data.edge_build_states.append(edge.build_state);
-        } else {
-            save_data.edge_build_states.append(EdgeBuildState.PENDING);
-        }
+        local edge_data = {
+            town_a = edge.town_a,
+            town_b = edge.town_b,
+            edge_type = edge.type,
+            status = edge.status,
+            build_state = ("build_state" in edge) ? edge.build_state : EdgeBuildState.PENDING
+        };
+        save_data.build_queue_data.append(edge_data);
+    }
+    
+    // Save mst_edges separately (includes edges not in build_queue)
+    save_data.mst_edges_data <- [];
+    foreach (edge in this.mst_edges) {
+        local edge_data = {
+            town_a = edge.town_a,
+            town_b = edge.town_b,
+            edge_type = edge.type,
+            status = edge.status
+        };
+        save_data.mst_edges_data.append(edge_data);
+    }
+    
+    // Save trunk_edges (for upgrade tracking)
+    save_data.trunk_edges_data <- [];
+    foreach (edge in this.trunk_edges) {
+        local edge_data = {
+            town_a = edge.town_a,
+            town_b = edge.town_b,
+            edge_type = edge.type,
+            status = edge.status,
+            upgrade_state = ("upgrade_state" in edge) ? edge.upgrade_state : EdgeBuildState.PENDING
+        };
+        save_data.trunk_edges_data.append(edge_data);
     }
     
     // Note: current_pathfinder, current_path cannot be serialized
     // They will be reset on load
+    
+    Log.Info("RoadNetwork saved: " + save_data.build_queue_data.len() + " build_queue edges, " +
+             save_data.mst_edges_data.len() + " mst_edges", Log.LVL_DEBUG);
     
     return save_data;
 }
@@ -951,10 +979,122 @@ function RoadNetwork::Load(data) {
     // Reset async upgrade pathfinding state (cannot be restored from save)
     this.ResetUpgradeAsyncState();
     
-    // Note: edge_build_states will be restored after build_queue is rebuilt in DoInit
-    // Any in-progress pathfinding will restart from scratch
+    // Restore full edge data if available (new save format)
+    if (data.rawin("build_queue_data") && data.build_queue_data.len() > 0) {
+        this.RestoreEdgesFromSave(data);
+        Log.Info("RoadNetwork loaded: state=" + this.state + ", restored " + 
+                 this.build_queue.len() + " build_queue edges, " +
+                 this.mst_edges.len() + " mst_edges", Log.LVL_INFO);
+    } else {
+        // Legacy save or no edges saved - force re-initialization
+        Log.Info("RoadNetwork loaded: state=" + this.state + " (no edge data, will re-init)", Log.LVL_INFO);
+        if (this.state != NetworkState.INIT) {
+            this.state = NetworkState.INIT;
+        }
+    }
+}
+
+/* Restore edges from saved data */
+function RoadNetwork::RestoreEdgesFromSave(data) {
+    // First build town_id_set and regions (needed for edge validation)
+    this.BuildTownIdSet();
+    this.PartitionTownsIntoRegions();
     
-    Log.Info("RoadNetwork loaded: state=" + this.state, Log.LVL_INFO);
+    // Create a lookup to find restored edges by town pair
+    local edge_lookup = {};
+    
+    // Restore mst_edges first (master list)
+    this.mst_edges = [];
+    if (data.rawin("mst_edges_data")) {
+        foreach (edge_data in data.mst_edges_data) {
+            // Validate towns still exist
+            if (!this.town_id_set.rawin(edge_data.town_a) || 
+                !this.town_id_set.rawin(edge_data.town_b)) {
+                continue;  // Skip edges with deleted towns
+            }
+            
+            local edge = this.CreateEdge(edge_data.town_a, edge_data.town_b, edge_data.edge_type);
+            edge.status = edge_data.status;
+            this.mst_edges.append(edge);
+            
+            // Add to lookup
+            local key = this.GetEdgeKey(edge_data.town_a, edge_data.town_b);
+            edge_lookup[key] <- edge;
+        }
+    }
+    
+    // Restore build_queue with references to mst_edges where possible
+    this.build_queue = [];
+    if (data.rawin("build_queue_data")) {
+        foreach (edge_data in data.build_queue_data) {
+            local key = this.GetEdgeKey(edge_data.town_a, edge_data.town_b);
+            local edge = null;
+            
+            if (edge_lookup.rawin(key)) {
+                // Reuse edge from mst_edges
+                edge = edge_lookup[key];
+            } else {
+                // Validate towns still exist
+                if (!this.town_id_set.rawin(edge_data.town_a) || 
+                    !this.town_id_set.rawin(edge_data.town_b)) {
+                    continue;  // Skip edges with deleted towns
+                }
+                // Create new edge (for edges added after initial MST, e.g., new towns)
+                edge = this.CreateEdge(edge_data.town_a, edge_data.town_b, edge_data.edge_type);
+                edge.status = edge_data.status;
+            }
+            
+            // Restore build_state, reset PATHFINDING/BUILDING to PENDING (will restart)
+            local build_state = edge_data.build_state;
+            if (build_state == EdgeBuildState.PATHFINDING || build_state == EdgeBuildState.BUILDING) {
+                build_state = EdgeBuildState.PENDING;
+                edge.status = EdgeStatus.PENDING;  // Also reset status
+            }
+            edge.build_state <- build_state;
+            
+            this.build_queue.append(edge);
+        }
+    }
+    
+    // Restore trunk_edges
+    this.trunk_edges = [];
+    if (data.rawin("trunk_edges_data")) {
+        foreach (edge_data in data.trunk_edges_data) {
+            local key = this.GetEdgeKey(edge_data.town_a, edge_data.town_b);
+            local edge = null;
+            
+            if (edge_lookup.rawin(key)) {
+                edge = edge_lookup[key];
+            } else {
+                // Validate towns still exist
+                if (!this.town_id_set.rawin(edge_data.town_a) || 
+                    !this.town_id_set.rawin(edge_data.town_b)) {
+                    continue;
+                }
+                edge = this.CreateEdge(edge_data.town_a, edge_data.town_b, edge_data.edge_type);
+                edge.status = edge_data.status;
+            }
+            
+            // Restore upgrade_state, reset in-progress to PENDING
+            local upgrade_state = edge_data.upgrade_state;
+            if (upgrade_state == EdgeBuildState.PATHFINDING || upgrade_state == EdgeBuildState.BUILDING) {
+                upgrade_state = EdgeBuildState.PENDING;
+            }
+            edge.upgrade_state <- upgrade_state;
+            
+            this.trunk_edges.append(edge);
+        }
+    }
+    
+    Log.Info("Restored edges: mst=" + this.mst_edges.len() + ", build_queue=" + 
+             this.build_queue.len() + ", trunk=" + this.trunk_edges.len(), Log.LVL_DEBUG);
+}
+
+/* Get unique key for an edge (smaller town_id first) */
+function RoadNetwork::GetEdgeKey(town_a, town_b) {
+    local min_id = (town_a < town_b) ? town_a : town_b;
+    local max_id = (town_a < town_b) ? town_b : town_a;
+    return min_id + "_" + max_id;
 }
 
 /* ========== Main Entry Point ========== */
