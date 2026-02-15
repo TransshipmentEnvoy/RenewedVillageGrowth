@@ -1,0 +1,1011 @@
+/*
+ * Road Network - Automatic road construction between towns
+ * Part of Renewed Village Growth Extended
+ *
+ * Features:
+ * - k-nearest neighbor graph construction
+ * - Region-based MST (Minimum Spanning Tree)
+ * - Cross-region connections for full connectivity
+ * - Incremental road building
+ * - Road type upgrades for trunk roads
+ */
+
+require("algo/union_find.nut");
+
+/* ========== Constants ========== */
+
+// Region size for map partitioning (in tiles)
+REGION_SIZE <- 512;
+
+// k-nearest neighbors for candidate edges
+K_NEIGHBORS <- 3;
+
+// Debug visualization
+DEBUG_SIGN_INTERVAL <- 20;  // Place sign every N tiles
+
+/* ========== Enums ========== */
+
+// Network state machine states
+enum NetworkState {
+    INIT = 0,          // Initial setup: partition towns, build MST
+    BUILDING = 1,      // Building roads incrementally
+    MONITORING = 2,    // Watching for new road types
+    UPGRADING = 3      // Upgrading trunk roads
+}
+
+// Edge status
+enum EdgeStatus {
+    PENDING = 0,       // Not yet attempted
+    BUILDING = 1,      // Currently being built
+    BUILT = 2,         // Successfully built
+    FAILED = 3         // Failed to build (terrain issues)
+}
+
+// Edge type (for prioritization)
+enum EdgeType {
+    INTRA_REGION = 0,  // Within same region (normal)
+    INTER_REGION = 1,  // Between regions (trunk road)
+    MAJOR_CITY = 2     // Connected to major city (trunk road)
+}
+
+/* ========== RoadNetwork Class ========== */
+
+class RoadNetwork {
+    // State
+    state = null;
+    
+    // Town data
+    towns = null;                   // Reference to main towns array
+    town_id_set = null;             // Set of valid town_ids (town_id -> true)
+    
+    // Region data
+    regions = null;                 // region_id -> array of town indices
+    regions_x = null;               // Number of regions in X direction
+    regions_y = null;               // Number of regions in Y direction
+    
+    // Graph data
+    edges = null;                   // All candidate edges
+    mst_edges = null;               // MST edges to build
+    inter_region_edges = null;      // Cross-region edges
+    trunk_edges = null;             // Trunk road edges (for upgrade)
+    
+    // Major cities tracking
+    major_cities = null;            // Set of major city town_ids
+    last_decade_update = null;      // Decade of last decade update (year / 10)
+    
+    // Build progress
+    build_queue = null;             // Edges waiting to be built
+    current_edge_index = null;      // Current position in build queue
+    
+    // Road type tracking
+    current_road_type = null;       // Currently used road type
+    best_road_type = null;          // Best available road type
+    
+    // Statistics
+    stats = null;                   // Build statistics
+    
+    // Settings
+    build_rate = null;              // Edges to build per month
+    upgrade_rate = null;            // Edges to upgrade per month
+    debug_signs = null;             // Show debug signs
+
+    constructor(towns_array) {
+        this.towns = towns_array;
+        this.state = NetworkState.INIT;
+        
+        // Initialize data structures
+        this.town_id_set = {};
+        this.regions = {};
+        this.edges = [];
+        this.mst_edges = [];
+        this.inter_region_edges = [];
+        this.trunk_edges = [];
+        this.build_queue = [];
+        this.current_edge_index = 0;
+        this.major_cities = {};
+        this.last_decade_update = GSDate.GetYear(GSDate.GetCurrentDate()) / 10;
+        
+        // Initialize statistics
+        this.stats = {
+            edges_planned = 0,
+            edges_built = 0,
+            edges_failed = 0,
+            edges_upgraded = 0
+        };
+        
+        // Read settings
+        this.build_rate = GSController.GetSetting("road_build_rate");
+        this.upgrade_rate = GSController.GetSetting("road_upgrade_rate");
+        this.debug_signs = GSController.GetSetting("debug_road_signs");
+        
+        // Calculate region grid size
+        this.regions_x = (GSMap.GetMapSizeX() + REGION_SIZE - 1) / REGION_SIZE;
+        this.regions_y = (GSMap.GetMapSizeY() + REGION_SIZE - 1) / REGION_SIZE;
+        
+        // Find best available road type
+        this.current_road_type = this.FindBestRoadType();
+        this.best_road_type = this.current_road_type;
+        
+        Log.Info("RoadNetwork initialized: " + this.regions_x + "x" + this.regions_y + " regions", Log.LVL_INFO);
+    }
+}
+
+/* ========== Region Management ========== */
+
+/* Get region ID for a tile */
+function RoadNetwork::GetRegionId(tile) {
+    local x = GSMap.GetTileX(tile) / REGION_SIZE;
+    local y = GSMap.GetTileY(tile) / REGION_SIZE;
+    return y * this.regions_x + x;
+}
+
+/* Get adjacent region IDs (only IDs greater than current, to avoid duplicates) */
+function RoadNetwork::GetAdjacentRegions(region_id) {
+    local adjacent = [];
+    local rx = region_id % this.regions_x;
+    local ry = region_id / this.regions_x;
+    
+    // Check all 8 directions
+    for (local dy = -1; dy <= 1; dy++) {
+        for (local dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;  // Skip self
+            
+            local nx = rx + dx;
+            local ny = ry + dy;
+            
+            if (nx >= 0 && nx < this.regions_x && ny >= 0 && ny < this.regions_y) {
+                local neighbor_id = ny * this.regions_x + nx;
+                // Only add greater IDs to avoid duplicate edges
+                if (neighbor_id > region_id) {
+                    adjacent.append(neighbor_id);
+                }
+            }
+        }
+    }
+    
+    return adjacent;
+}
+
+/* Build town ID set (set of valid town_ids) */
+function RoadNetwork::BuildTownIdSet() {
+    this.town_id_set = {};
+    
+    foreach (town in this.towns) {
+        this.town_id_set[town.id] <- true;
+    }
+    
+    local count = 0;
+    foreach (_, _ in this.town_id_set) count++;
+    Log.Info("Built town ID set: " + count + " towns", Log.LVL_DEBUG);
+}
+
+/* Partition towns into regions */
+function RoadNetwork::PartitionTownsIntoRegions() {
+    this.regions = {};
+    
+    foreach (town in this.towns) {
+        local town_tile = GSTown.GetLocation(town.id);
+        local region_id = this.GetRegionId(town_tile);
+        
+        // Initialize region array if needed
+        if (!this.regions.rawin(region_id)) {
+            this.regions[region_id] <- [];
+        }
+        
+        // Add town_id to region
+        this.regions[region_id].append(town.id);
+    }
+    
+    // Log region statistics
+    local total_regions = 0;
+    local max_towns_in_region = 0;
+    foreach (region_id, town_indices in this.regions) {
+        total_regions++;
+        if (town_indices.len() > max_towns_in_region) {
+            max_towns_in_region = town_indices.len();
+        }
+    }
+    
+    Log.Info("Partitioned into " + total_regions + " regions (max " + max_towns_in_region + " towns/region)", Log.LVL_INFO);
+}
+
+/* Get town tile location by town_id */
+function RoadNetwork::GetTownTile(town_id) {
+    return GSTown.GetLocation(town_id);
+}
+
+/* Get town population by town_id */
+function RoadNetwork::GetTownPopulation(town_id) {
+    return GSTown.GetPopulation(town_id);
+}
+
+/* Calculate Manhattan distance between two towns (by town_id) */
+function RoadNetwork::TownDistance(town_id_a, town_id_b) {
+    local tile_a = this.GetTownTile(town_id_a);
+    local tile_b = this.GetTownTile(town_id_b);
+    return GSMap.DistanceManhattan(tile_a, tile_b);
+}
+
+/* ========== Road Building ========== */
+
+/* Build a single road segment using SuperLib.RoadBuilder */
+function RoadNetwork::BuildRoadSegment(edge) {
+    // Set road type
+    GSRoad.SetCurrentRoadType(this.current_road_type);
+    
+    // Use SuperLib.RoadBuilder
+    local builder = SuperLib.RoadBuilder();
+    
+    // Initialize connection task
+    builder.Init(edge.from_tile, edge.to_tile, false, 4000);
+    
+    // Performance settings
+    builder.SetEstimateMultiplier(1.5);
+    builder.EnableSlowBuilding(true);  // Avoid lag
+    
+    // Execute connection
+    local result = builder.ConnectTiles();
+    
+    switch (result) {
+        case SuperLib.RoadBuilder.CONNECT_SUCCEEDED:
+            Log.Info("Road built: " + edge.town_a + " -> " + edge.town_b, Log.LVL_DEBUG);
+            return true;
+        case SuperLib.RoadBuilder.CONNECT_FAILED_TIME_OUT:
+            Log.Info("Road timeout: " + edge.town_a + " -> " + edge.town_b, Log.LVL_DEBUG);
+            return false;
+        case SuperLib.RoadBuilder.CONNECT_FAILED_NO_PATH_FOUND:
+            Log.Info("No path: " + edge.town_a + " -> " + edge.town_b, Log.LVL_DEBUG);
+            return false;
+        default:
+            Log.Info("Road failed: " + result, Log.LVL_DEBUG);
+            return false;
+    }
+}
+
+/* Build multiple road segments up to the rate limit */
+function RoadNetwork::BuildBatch(max_count) {
+    local built = 0;
+    
+    // Refresh debug_signs setting to allow runtime toggle
+    this.debug_signs = GSController.GetSetting("debug_road_signs");
+    
+    while (this.current_edge_index < this.build_queue.len() && built < max_count) {
+        local edge = this.build_queue[this.current_edge_index];
+        
+        // Skip already processed edges
+        if (edge.status != EdgeStatus.PENDING) {
+            this.current_edge_index++;
+            continue;
+        }
+        
+        // Check ops budget
+        if (GSController.GetOpsTillSuspend() < 1000) {
+            GSController.Sleep(1);
+        }
+        
+        // Mark as building
+        edge.status = EdgeStatus.BUILDING;
+        
+        // Attempt to build
+        if (this.BuildRoadSegment(edge)) {
+            edge.status = EdgeStatus.BUILT;
+            this.stats.edges_built++;
+            built++;
+        } else {
+            edge.status = EdgeStatus.FAILED;
+            this.stats.edges_failed++;
+        }
+        
+        // Debug visualization (regardless of success/failure)
+        if (this.debug_signs) {
+            this.DebugMarkEdge(edge);
+        }
+        
+        this.current_edge_index++;
+    }
+    
+    return built;
+}
+
+/* Debug visualization - mark edge with signs */
+function RoadNetwork::DebugMarkEdge(edge) {
+    local from = edge.from_tile;
+    local to = edge.to_tile;
+    local dist = GSMap.DistanceManhattan(from, to);
+    
+    if (dist == 0) return;
+    
+    local dx = GSMap.GetTileX(to) - GSMap.GetTileX(from);
+    local dy = GSMap.GetTileY(to) - GSMap.GetTileY(from);
+    
+    // Place sign every DEBUG_SIGN_INTERVAL tiles
+    for (local i = 0; i <= dist; i += DEBUG_SIGN_INTERVAL) {
+        local ratio = i.tofloat() / dist;
+        local x = GSMap.GetTileX(from) + (dx * ratio).tointeger();
+        local y = GSMap.GetTileY(from) + (dy * ratio).tointeger();
+        local tile = GSMap.GetTileIndex(x, y);
+        
+        local label = "R:" + i;
+        if (edge.type == EdgeType.INTER_REGION) label = "T:" + i;
+        else if (edge.type == EdgeType.MAJOR_CITY) label = "M:" + i;
+        
+        GSSign.BuildSign(tile, label);
+    }
+}
+
+/* ========== Graph Construction ========== */
+
+/* Create an edge object */
+function RoadNetwork::CreateEdge(town_a, town_b, edge_type) {
+    return {
+        town_a = town_a,
+        town_b = town_b,
+        from_tile = this.GetTownTile(town_a),
+        to_tile = this.GetTownTile(town_b),
+        distance = this.TownDistance(town_a, town_b),
+        type = edge_type,
+        status = EdgeStatus.PENDING
+    };
+}
+
+/* Build k-nearest neighbor candidate edges for a region */
+function RoadNetwork::BuildKNNEdgesForRegion(region_id) {
+    if (!this.regions.rawin(region_id)) return [];
+    
+    local town_ids = this.regions[region_id];
+    local n = town_ids.len();
+    if (n < 2) return [];
+    
+    local edges = [];
+    local edge_set = {};  // Key: "min_max" to avoid duplicates
+    
+    foreach (i, town_a in town_ids) {
+        // Calculate distances to all other towns in region
+        local distances = [];
+        foreach (j, town_b in town_ids) {
+            if (i == j) continue;
+            distances.append({
+                town = town_b,
+                dist = this.TownDistance(town_a, town_b)
+            });
+        }
+        
+        // Sort by distance
+        distances.sort(function(a, b) { return a.dist - b.dist; });
+        
+        // Take k nearest
+        local k = (K_NEIGHBORS < distances.len()) ? K_NEIGHBORS : distances.len();
+        for (local idx = 0; idx < k; idx++) {
+            local town_b = distances[idx].town;
+            
+            // Create unique edge key (smaller id first)
+            local min_id = (town_a < town_b) ? town_a : town_b;
+            local max_id = (town_a < town_b) ? town_b : town_a;
+            local key = min_id + "_" + max_id;
+            
+            // Add edge if not already added
+            if (!edge_set.rawin(key)) {
+                edge_set[key] <- true;
+                edges.append(this.CreateEdge(min_id, max_id, EdgeType.INTRA_REGION));
+            }
+        }
+    }
+    
+    return edges;
+}
+
+/* Build MST using Kruskal's algorithm for a set of edges */
+function RoadNetwork::BuildMSTFromEdges(edges, town_ids) {
+    if (edges.len() == 0) return [];
+    
+    // Build a local mapping from town_id to sequential index for Union-Find
+    local id_to_idx = {};
+    local idx = 0;
+    foreach (town_id in town_ids) {
+        if (!id_to_idx.rawin(town_id)) {
+            id_to_idx[town_id] <- idx;
+            idx++;
+        }
+    }
+    
+    // Sort edges by distance
+    edges.sort(function(a, b) { return a.distance - b.distance; });
+    
+    // Create union-find for MST using sequential indices
+    local uf = UnionFind(idx);
+    local mst = [];
+    
+    foreach (edge in edges) {
+        // Map town_ids to local indices
+        if (!id_to_idx.rawin(edge.town_a) || !id_to_idx.rawin(edge.town_b)) continue;
+        local idx_a = id_to_idx[edge.town_a];
+        local idx_b = id_to_idx[edge.town_b];
+        
+        if (uf.Union(idx_a, idx_b)) {
+            mst.append(edge);
+        }
+    }
+    
+    return mst;
+}
+
+/* Build MST for a single region */
+function RoadNetwork::BuildRegionMST(region_id) {
+    // Get KNN edges for this region
+    local edges = this.BuildKNNEdgesForRegion(region_id);
+    if (edges.len() == 0) return [];
+    
+    // Get town_ids in this region for Union-Find mapping
+    local town_ids = this.regions[region_id];
+    return this.BuildMSTFromEdges(edges, town_ids);
+}
+
+/* Find inter-region connections */
+function RoadNetwork::FindInterRegionConnections() {
+    local inter_edges = [];
+    
+    foreach (region_a, towns_a in this.regions) {
+        local adjacent = this.GetAdjacentRegions(region_a);
+        
+        foreach (region_b in adjacent) {
+            if (!this.regions.rawin(region_b)) continue;
+            
+            local towns_b = this.regions[region_b];
+            
+            // Find closest town pair between regions
+            local min_dist = 999999;
+            local best_a = null;
+            local best_b = null;
+            
+            foreach (town_a in towns_a) {
+                foreach (town_b in towns_b) {
+                    local dist = this.TownDistance(town_a, town_b);
+                    if (dist < min_dist) {
+                        min_dist = dist;
+                        best_a = town_a;
+                        best_b = town_b;
+                    }
+                }
+            }
+            
+            if (best_a != null && best_b != null) {
+                inter_edges.append(this.CreateEdge(best_a, best_b, EdgeType.INTER_REGION));
+            }
+        }
+    }
+    
+    Log.Info("Found " + inter_edges.len() + " inter-region connections", Log.LVL_INFO);
+    return inter_edges;
+}
+
+/* Identify major city edges (top 10% by population) */
+function RoadNetwork::IdentifyMajorCityEdges() {
+    // Get town populations
+    local town_pops = [];
+    foreach (town in this.towns) {
+        town_pops.append({
+            town_id = town.id,
+            population = this.GetTownPopulation(town.id)
+        });
+    }
+    
+    // Sort by population descending
+    town_pops.sort(function(a, b) { return b.population - a.population; });
+    
+    // Mark top 10% as major cities
+    local major_count = (town_pops.len() + 9) / 10;  // Ceiling division
+    local major_set = {};
+    
+    for (local i = 0; i < major_count && i < town_pops.len(); i++) {
+        major_set[town_pops[i].town_id] <- true;
+    }
+    
+    // Store major cities set for later reference
+    this.major_cities = major_set;
+    
+    // Mark edges connected to major cities
+    foreach (edge in this.mst_edges) {
+        if (major_set.rawin(edge.town_a) || major_set.rawin(edge.town_b)) {
+            if (edge.type == EdgeType.INTRA_REGION) {
+                edge.type = EdgeType.MAJOR_CITY;
+            }
+        }
+    }
+    
+    Log.Info("Identified " + major_count + " major cities", Log.LVL_DEBUG);
+}
+
+/* ========== Road Type Management ========== */
+
+/* Find the best available road type that is town buildable */
+function RoadNetwork::FindBestRoadType() {
+    local best_type = null;
+    local best_speed = 0;
+    
+    // Check if JGRPP's IsTownBuildableRoadType is available
+    local has_town_buildable_check = "IsTownBuildableRoadType" in GSRoad;
+    
+    local road_types = GSRoadTypeList(GSRoad.ROADTRAMTYPES_ROAD);
+    foreach (road_type, _ in road_types) {
+        if (!GSRoad.IsRoadTypeAvailable(road_type)) continue;
+        
+        // If JGRPP, only use town-buildable road types (so towns can expand on them)
+        if (has_town_buildable_check) {
+            if (!GSRoad.IsTownBuildableRoadType(road_type)) continue;
+        }
+        
+        local speed = GSRoad.GetMaxSpeed(road_type);
+        if (speed == 0) speed = 65535;  // Unlimited speed
+        
+        if (speed > best_speed) {
+            best_speed = speed;
+            best_type = road_type;
+        }
+    }
+    
+    if (best_type != null) {
+        Log.Info("Best road type: " + GSRoad.GetName(best_type) + " (speed: " + best_speed + ", town_buildable: " + has_town_buildable_check + ")", Log.LVL_DEBUG);
+    } else {
+        Log.Warning("No suitable road type found!", Log.LVL_INFO);
+    }
+    
+    return best_type;
+}
+
+/* ========== Save/Load ========== */
+
+function RoadNetwork::Save() {
+    local save_data = {
+        state = this.state,
+        current_edge_index = this.current_edge_index,
+        stats = this.stats,
+        current_road_type = this.current_road_type,
+        last_decade_update = this.last_decade_update
+    };
+    
+    // Save major cities as array (tables can't be saved directly)
+    save_data.major_cities_list <- [];
+    foreach (town_id, _ in this.major_cities) {
+        save_data.major_cities_list.append(town_id);
+    }
+    
+    // Save edge statuses
+    save_data.edge_statuses <- [];
+    foreach (edge in this.build_queue) {
+        save_data.edge_statuses.append(edge.status);
+    }
+    
+    return save_data;
+}
+
+function RoadNetwork::Load(data) {
+    if (data == null) return;
+    
+    if (data.rawin("state")) this.state = data.state;
+    if (data.rawin("current_edge_index")) this.current_edge_index = data.current_edge_index;
+    if (data.rawin("stats")) this.stats = data.stats;
+    if (data.rawin("current_road_type")) this.current_road_type = data.current_road_type;
+    if (data.rawin("last_decade_update")) this.last_decade_update = data.last_decade_update;
+    // Legacy compatibility: convert yearly to decade
+    else if (data.rawin("last_yearly_update")) this.last_decade_update = data.last_yearly_update / 10;
+    
+    // Restore major cities from array
+    if (data.rawin("major_cities_list")) {
+        this.major_cities = {};
+        foreach (town_id in data.major_cities_list) {
+            this.major_cities[town_id] <- true;
+        }
+    }
+    
+    Log.Info("RoadNetwork loaded: state=" + this.state, Log.LVL_INFO);
+}
+
+/* ========== Main Entry Point ========== */
+
+/* Called every tick from main loop */
+function RoadNetwork::Manage() {
+    switch (this.state) {
+        case NetworkState.INIT:
+            this.DoInit();
+            break;
+        case NetworkState.BUILDING:
+            this.DoBuilding();
+            break;
+        case NetworkState.MONITORING:
+            this.DoMonitoring();
+            break;
+        case NetworkState.UPGRADING:
+            this.DoUpgrading();
+            break;
+    }
+}
+
+/* Called when a new town is founded */
+function RoadNetwork::OnTownFounded(town_id, town_index) {
+    // Skip if still initializing
+    if (this.state == NetworkState.INIT) return;
+    
+    // Note: town_index parameter kept for interface compatibility but not used
+    // We use town_id directly for robustness against town deletion
+    
+    Log.Info("RoadNetwork: New town founded (id=" + town_id + "), connecting to network", Log.LVL_INFO);
+    
+    // Add to town ID set
+    this.town_id_set[town_id] <- true;
+    
+    // Get town location and region
+    local town_tile = GSTown.GetLocation(town_id);
+    local region_id = this.GetRegionId(town_tile);
+    
+    // Add to region (store town_id, not index)
+    if (!this.regions.rawin(region_id)) {
+        this.regions[region_id] <- [];
+    }
+    this.regions[region_id].append(town_id);
+    
+    // Find k nearest towns to connect to
+    local new_edges = this.FindNearestTownEdges(town_id, K_NEIGHBORS);
+    
+    if (new_edges.len() > 0) {
+        // Add new edges to build queue
+        foreach (edge in new_edges) {
+            this.build_queue.append(edge);
+            this.mst_edges.append(edge);
+        }
+        
+        this.stats.edges_planned += new_edges.len();
+        Log.Info("RoadNetwork: Added " + new_edges.len() + " edges for new town", Log.LVL_DEBUG);
+        
+        // If we were monitoring or upgrading, go back to building
+        if (this.state == NetworkState.MONITORING || this.state == NetworkState.UPGRADING) {
+            this.state = NetworkState.BUILDING;
+        }
+    }
+}
+
+/* Find k nearest towns to connect a new town */
+function RoadNetwork::FindNearestTownEdges(new_town_id, k) {
+    local edges = [];
+    local distances = [];
+    
+    // Calculate distance to all existing towns in the set
+    foreach (town_id, _ in this.town_id_set) {
+        if (town_id == new_town_id) continue;
+        if (!GSTown.IsValidTown(town_id)) continue;  // Skip invalid towns
+        
+        distances.append({
+            town = town_id,
+            dist = this.TownDistance(new_town_id, town_id)
+        });
+    }
+    
+    if (distances.len() == 0) return edges;
+    
+    // Sort by distance
+    distances.sort(function(a, b) { return a.dist - b.dist; });
+    
+    // Take k nearest
+    local count = (k < distances.len()) ? k : distances.len();
+    for (local i = 0; i < count; i++) {
+        local nearest_id = distances[i].town;
+        edges.append(this.CreateEdge(new_town_id, nearest_id, EdgeType.INTRA_REGION));
+    }
+    
+    return edges;
+}
+
+/* ========== State Handlers (Stubs) ========== */
+
+function RoadNetwork::DoInit() {
+    Log.Info("RoadNetwork: Initializing...", Log.LVL_INFO);
+    
+    // 1. Build town ID set
+    this.BuildTownIdSet();
+    
+    // 2. Partition towns into regions
+    this.PartitionTownsIntoRegions();
+    
+    // 3. Build MST for each region
+    this.mst_edges = [];
+    foreach (region_id, _ in this.regions) {
+        local region_mst = this.BuildRegionMST(region_id);
+        foreach (edge in region_mst) {
+            this.mst_edges.append(edge);
+        }
+    }
+    Log.Info("Built MST with " + this.mst_edges.len() + " intra-region edges", Log.LVL_INFO);
+    
+    // 4. Find inter-region connections
+    this.inter_region_edges = this.FindInterRegionConnections();
+    
+    // 5. Merge all edges and identify major city edges
+    foreach (edge in this.inter_region_edges) {
+        this.mst_edges.append(edge);
+    }
+    this.IdentifyMajorCityEdges();
+    
+    // 6. Prepare build queue (prioritize inter-region and major city edges)
+    this.PrepareBuildQueue();
+    
+    this.stats.edges_planned = this.build_queue.len();
+    Log.Info("Build queue prepared: " + this.build_queue.len() + " edges", Log.LVL_INFO);
+    
+    this.state = NetworkState.BUILDING;
+}
+
+/* Prepare build queue with prioritization */
+function RoadNetwork::PrepareBuildQueue() {
+    // Separate edges by type
+    local high_priority = [];   // Inter-region and major city
+    local normal_priority = []; // Regular edges
+    
+    foreach (edge in this.mst_edges) {
+        if (edge.type == EdgeType.INTER_REGION || edge.type == EdgeType.MAJOR_CITY) {
+            high_priority.append(edge);
+            this.trunk_edges.append(edge);  // Mark for future upgrade
+        } else {
+            normal_priority.append(edge);
+        }
+    }
+    
+    // Sort each group by distance (shorter first)
+    high_priority.sort(function(a, b) { return a.distance - b.distance; });
+    normal_priority.sort(function(a, b) { return a.distance - b.distance; });
+    
+    // Build queue: high priority first, then normal
+    this.build_queue = [];
+    foreach (edge in high_priority) {
+        this.build_queue.append(edge);
+    }
+    foreach (edge in normal_priority) {
+        this.build_queue.append(edge);
+    }
+    
+    this.current_edge_index = 0;
+    
+    Log.Info("Trunk edges: " + this.trunk_edges.len() + ", Regular edges: " + normal_priority.len(), Log.LVL_DEBUG);
+}
+
+function RoadNetwork::DoBuilding() {
+    // Build up to build_rate edges
+    local built = this.BuildBatch(this.build_rate);
+    
+    if (built > 0) {
+        Log.Info("RoadNetwork: Built " + built + " roads (" + 
+                 this.stats.edges_built + "/" + this.stats.edges_planned + ")", Log.LVL_DEBUG);
+    }
+    
+    // Check if all edges are processed
+    if (this.current_edge_index >= this.build_queue.len()) {
+        Log.Info("RoadNetwork: Building complete! Built: " + this.stats.edges_built + 
+                 ", Failed: " + this.stats.edges_failed, Log.LVL_INFO);
+        this.state = NetworkState.MONITORING;
+    }
+}
+
+function RoadNetwork::DoMonitoring() {
+    // Check for decade update (every 10 years)
+    local current_decade = GSDate.GetYear(GSDate.GetCurrentDate()) / 10;
+    if (current_decade > this.last_decade_update) {
+        this.DecadeUpdate();
+        this.last_decade_update = current_decade;
+    }
+    
+    // Check for new road types periodically
+    local new_best = this.FindBestRoadType();
+    
+    if (new_best != null && new_best != this.best_road_type) {
+        local old_speed = GSRoad.GetMaxSpeed(this.best_road_type);
+        local new_speed = GSRoad.GetMaxSpeed(new_best);
+        
+        if (old_speed == 0) old_speed = 65535;
+        if (new_speed == 0) new_speed = 65535;
+        
+        if (new_speed > old_speed) {
+            Log.Info("RoadNetwork: New road type available! " + GSRoad.GetName(new_best), Log.LVL_INFO);
+            this.best_road_type = new_best;
+            this.current_road_type = new_best;
+            
+            // Prepare trunk roads for upgrade
+            this.PrepareUpgradeQueue();
+            this.state = NetworkState.UPGRADING;
+        }
+    }
+}
+
+/* Decade update: re-evaluate major cities and edge types every 10 years */
+function RoadNetwork::DecadeUpdate() {
+    Log.Info("RoadNetwork: Performing decade update...", Log.LVL_INFO);
+    
+    // Store old major cities for comparison
+    local old_major_cities = this.major_cities;
+    
+    // Re-identify major cities based on current populations
+    this.UpdateMajorCities();
+    
+    // Log changes in major cities
+    local added = 0;
+    local removed = 0;
+    foreach (town_id, _ in this.major_cities) {
+        if (!old_major_cities.rawin(town_id)) added++;
+    }
+    foreach (town_id, _ in old_major_cities) {
+        if (!this.major_cities.rawin(town_id)) removed++;
+    }
+    if (added > 0 || removed > 0) {
+        Log.Info("RoadNetwork: Major cities changed: +" + added + " -" + removed, Log.LVL_INFO);
+    }
+    
+    // Update edge types based on new major cities
+    this.UpdateEdgeTypes();
+    
+    // Rebuild trunk_edges list with current trunk roads only
+    this.RebuildTrunkEdgesList();
+    
+    // Check for failed edges and retry building them
+    local failed_count = this.RebuildFailedEdges();
+    if (failed_count > 0) {
+        Log.Info("RoadNetwork: Retrying " + failed_count + " failed edges", Log.LVL_INFO);
+        this.state = NetworkState.BUILDING;
+    }
+}
+
+/* Re-identify major cities based on current populations */
+function RoadNetwork::UpdateMajorCities() {
+    // Get town populations
+    local town_pops = [];
+    foreach (town in this.towns) {
+        town_pops.append({
+            town_id = town.id,
+            population = this.GetTownPopulation(town.id)
+        });
+    }
+    
+    // Sort by population descending
+    town_pops.sort(function(a, b) { return b.population - a.population; });
+    
+    // Mark top 10% as major cities
+    local major_count = (town_pops.len() + 9) / 10;  // Ceiling division
+    this.major_cities = {};
+    
+    for (local i = 0; i < major_count && i < town_pops.len(); i++) {
+        this.major_cities[town_pops[i].town_id] <- true;
+    }
+    
+    Log.Info("RoadNetwork: Identified " + major_count + " major cities", Log.LVL_DEBUG);
+}
+
+/* Update edge types based on current major cities */
+function RoadNetwork::UpdateEdgeTypes() {
+    local promoted = 0;
+    local demoted = 0;
+    
+    foreach (edge in this.mst_edges) {
+        local is_connected_to_major = this.major_cities.rawin(edge.town_a) || 
+                                       this.major_cities.rawin(edge.town_b);
+        
+        // Skip inter-region edges - they always stay as trunk roads
+        if (edge.type == EdgeType.INTER_REGION) continue;
+        
+        if (is_connected_to_major && edge.type == EdgeType.INTRA_REGION) {
+            // Promote to major city edge
+            edge.type = EdgeType.MAJOR_CITY;
+            promoted++;
+        } else if (!is_connected_to_major && edge.type == EdgeType.MAJOR_CITY) {
+            // Demote to regular edge (city is no longer major)
+            edge.type = EdgeType.INTRA_REGION;
+            demoted++;
+        }
+    }
+    
+    if (promoted > 0 || demoted > 0) {
+        Log.Info("RoadNetwork: Edge type changes: +" + promoted + " promoted, -" + demoted + " demoted", Log.LVL_DEBUG);
+    }
+}
+
+/* Rebuild trunk_edges list with only current trunk roads */
+function RoadNetwork::RebuildTrunkEdgesList() {
+    this.trunk_edges = [];
+    
+    foreach (edge in this.mst_edges) {
+        if (edge.type == EdgeType.INTER_REGION || edge.type == EdgeType.MAJOR_CITY) {
+            // Only include successfully built edges for upgrade
+            if (edge.status == EdgeStatus.BUILT) {
+                this.trunk_edges.append(edge);
+            }
+        }
+    }
+    
+    Log.Info("RoadNetwork: Trunk edges list updated: " + this.trunk_edges.len() + " edges", Log.LVL_DEBUG);
+}
+
+/* Find failed edges and add them back to build queue */
+function RoadNetwork::RebuildFailedEdges() {
+    local failed_edges = [];
+    
+    foreach (edge in this.mst_edges) {
+        if (edge.status == EdgeStatus.FAILED) {
+            // Reset status to pending for retry
+            edge.status = EdgeStatus.PENDING;
+            failed_edges.append(edge);
+        }
+    }
+    
+    if (failed_edges.len() > 0) {
+        // Sort failed edges by priority (trunk roads first, then by distance)
+        failed_edges.sort(function(a, b) {
+            // Prioritize trunk roads
+            if (a.type != b.type) {
+                if (a.type == EdgeType.INTER_REGION || a.type == EdgeType.MAJOR_CITY) return -1;
+                if (b.type == EdgeType.INTER_REGION || b.type == EdgeType.MAJOR_CITY) return 1;
+            }
+            return a.distance - b.distance;
+        });
+        
+        // Add to build queue
+        foreach (edge in failed_edges) {
+            this.build_queue.append(edge);
+        }
+        
+        // Update stats
+        this.stats.edges_failed -= failed_edges.len();
+    }
+    
+    return failed_edges.len();
+}
+
+function RoadNetwork::DoUpgrading() {
+    // Upgrade trunk roads to better road type
+    local upgraded = this.UpgradeBatch(this.upgrade_rate);
+    
+    if (upgraded > 0) {
+        Log.Info("RoadNetwork: Upgraded " + upgraded + " trunk road segments", Log.LVL_DEBUG);
+    }
+    
+    // Check if upgrade is complete
+    if (this.current_edge_index >= this.trunk_edges.len()) {
+        Log.Info("RoadNetwork: Trunk road upgrade complete! Upgraded: " + this.stats.edges_upgraded, Log.LVL_INFO);
+        this.current_edge_index = 0;  // Reset for next upgrade cycle
+        this.state = NetworkState.MONITORING;
+    }
+}
+
+/* Prepare trunk edges for upgrade */
+function RoadNetwork::PrepareUpgradeQueue() {
+    // Rebuild trunk edges list to only include current trunk roads
+    this.RebuildTrunkEdgesList();
+    
+    this.current_edge_index = 0;
+    
+    Log.Info("RoadNetwork: Preparing to upgrade " + this.trunk_edges.len() + " trunk roads", Log.LVL_INFO);
+}
+
+/* Upgrade a batch of trunk roads */
+function RoadNetwork::UpgradeBatch(max_count) {
+    local upgraded = 0;
+    
+    GSRoad.SetCurrentRoadType(this.current_road_type);
+    
+    while (this.current_edge_index < this.trunk_edges.len() && upgraded < max_count) {
+        local edge = this.trunk_edges[this.current_edge_index];
+        
+        // Check ops budget
+        if (GSController.GetOpsTillSuspend() < 500) {
+            GSController.Sleep(1);
+        }
+        
+        // Try to convert road type
+        if (edge.status == EdgeStatus.BUILT) {
+            // Use simple conversion - SuperLib's builder might have used different paths
+            // so we just try to connect again with the new road type
+            if (GSRoad.ConvertRoadType(edge.from_tile, edge.to_tile, this.current_road_type)) {
+                upgraded++;
+                this.stats.edges_upgraded++;
+            }
+        }
+        
+        this.current_edge_index++;
+    }
+    
+    return upgraded;
+}
