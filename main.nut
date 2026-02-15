@@ -8,12 +8,19 @@ require("story.nut");
 require("strings.nut");
 require("generation_cargo.nut");
 require("tech_advance.nut");
-require("road_network.nut");
 
 // Import SuperLib for GameScript
 import("util.superlib", "SuperLib", 40);
 Log <- SuperLib.Log;
 Helper <- SuperLib.Helper;
+
+// Bundled road pathfinder and builder (must be after SuperLib import)
+require("pathfinder/road.nut");
+require("roadbuilder/roadpathfinder.nut");
+require("roadbuilder/roadbuilder.nut");
+
+// Road network (depends on RoadPathFinder)
+require("road_network.nut");
 
 // Import ToyLib
 // import("Library.GSToyLib", "GSToyLib", 2);

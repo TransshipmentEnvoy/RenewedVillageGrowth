@@ -315,7 +315,7 @@ function RoadNetwork::StartBuildPathfinding(edge) {
     GSRoad.SetCurrentRoadType(this.current_road_type);
     
     // Create pathfinder instance
-    local pf = SuperLib.RoadPathFinder();
+    local pf = RoadPathFinder();
     
     // Initialize path search
     pf.InitializePath([edge.from_tile], [edge.to_tile], false);
@@ -357,12 +357,12 @@ function RoadNetwork::ContinueBuildPathfinding() {
     }
     
     // Check for errors
-    if (error == SuperLib.RoadPathFinder.PATH_FIND_FAILED_NO_PATH) {
+    if (error == RoadPathFinder.PATH_FIND_FAILED_NO_PATH) {
         Log.Info("No build path: " + this.build_edge.town_a + " -> " + this.build_edge.town_b, Log.LVL_DEBUG);
         return PathfindResult.FAILED;
     }
     
-    if (error == SuperLib.RoadPathFinder.PATH_FIND_FAILED_TIME_OUT) {
+    if (error == RoadPathFinder.PATH_FIND_FAILED_TIME_OUT) {
         Log.Info("Build pathfind timeout: " + this.build_edge.town_a + " -> " + this.build_edge.town_b + 
                  " (" + this.build_pathfind_iterations + " iterations)", Log.LVL_DEBUG);
         return PathfindResult.FAILED;
@@ -1515,7 +1515,7 @@ function RoadNetwork::StartUpgradePathfinding(edge) {
     GSRoad.SetCurrentRoadType(this.current_road_type);
     
     // Create pathfinder instance
-    local pf = SuperLib.RoadPathFinder();
+    local pf = RoadPathFinder();
     
     // Initialize path search - use repair_existing=true to strongly prefer existing roads
     pf.InitializePath([edge.from_tile], [edge.to_tile], true);
@@ -1557,12 +1557,12 @@ function RoadNetwork::ContinueUpgradePathfinding() {
     }
     
     // Check for errors
-    if (error == SuperLib.RoadPathFinder.PATH_FIND_FAILED_NO_PATH) {
+    if (error == RoadPathFinder.PATH_FIND_FAILED_NO_PATH) {
         Log.Info("No upgrade path: " + this.upgrade_edge.town_a + " -> " + this.upgrade_edge.town_b, Log.LVL_DEBUG);
         return PathfindResult.FAILED;
     }
     
-    if (error == SuperLib.RoadPathFinder.PATH_FIND_FAILED_TIME_OUT) {
+    if (error == RoadPathFinder.PATH_FIND_FAILED_TIME_OUT) {
         Log.Info("Upgrade pathfind timeout: " + this.upgrade_edge.town_a + " -> " + this.upgrade_edge.town_b, Log.LVL_DEBUG);
         return PathfindResult.FAILED;
     }
