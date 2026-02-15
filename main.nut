@@ -8,6 +8,7 @@ require("story.nut");
 require("strings.nut");
 require("generation_cargo.nut");
 require("tech_advance.nut");
+require("road_network.nut");
 
 // Import SuperLib for GameScript
 import("util.superlib", "SuperLib", 40);
@@ -62,8 +63,10 @@ class MainClass extends GSController
 
     generation_cargo = null;
     tech_advance = null;
+    road_network = null;
 
     pending_tech_advance_data = null;
+    pending_road_network_data = null;
 
     constructor() {
         this.companies = [];
@@ -85,8 +88,10 @@ class MainClass extends GSController
         // extended
         this.generation_cargo = null;
         this.tech_advance = null;
+        this.road_network = null;
 
         this.pending_tech_advance_data = null;
+        this.pending_road_network_data = null;
     }
 }
 
@@ -134,6 +139,19 @@ function MainClass::Start()
         if (this.pending_tech_advance_data != null) {
             this.tech_advance.Load(this.pending_tech_advance_data);
             this.pending_tech_advance_data = null;
+        }
+    }
+
+    // Extended: Road Network Building
+    local control_road_network = GSController.GetSetting("road_network");
+    if (control_road_network) {
+        Log.Info("Extended: Road Network Building", Log.LVL_INFO);
+        this.road_network = RoadNetwork(this.towns);
+
+        // Load saved road network data
+        if (this.pending_road_network_data != null) {
+            this.road_network.Load(this.pending_road_network_data);
+            this.pending_road_network_data = null;
         }
     }
     GSGame.Unpause();
@@ -208,6 +226,9 @@ function MainClass::Start()
         }
         if (this.tech_advance != null) {
             tech_advance.Manage();
+        }
+        if (this.road_network != null) {
+            road_network.Manage();
         }
     }
 }
@@ -293,7 +314,13 @@ function MainClass::HandleEvents()
         case GSEvent.ET_TOWN_FOUNDED:
             event = GSEventTownFounded.Convert(event);
             local town_id = event.GetTownID();
-            if (GSTown.IsValidTown(town_id)) this.UpdateTownList(town_id);
+            if (GSTown.IsValidTown(town_id)) {
+                this.UpdateTownList(town_id);
+                // Notify road network to connect the new town
+                if (this.road_network != null) {
+                    this.road_network.OnTownFounded(town_id);
+                }
+            }
             break;
 
         case GSEvent.ET_COMPANY_NEW:
@@ -456,6 +483,11 @@ function MainClass::Save()
         if (this.tech_advance != null) {
             save_table.tech_advance_data <- this.tech_advance.Save();
         }
+        
+        // Save road network data
+        if (this.road_network != null) {
+            save_table.road_network_data <- this.road_network.Save();
+        }
     }
 
     return save_table;
@@ -484,6 +516,11 @@ function MainClass::Load(version, saved_data)
         // Load tech advance data later in Start() after TechAdvance is constructed
         if (saved_data.rawin("tech_advance_data")) {
             this.pending_tech_advance_data = saved_data.tech_advance_data;
+        }
+        
+        // Load road network data later in Start() after RoadNetwork is constructed
+        if (saved_data.rawin("road_network_data")) {
+            this.pending_road_network_data = saved_data.road_network_data;
         }
     }
     else {

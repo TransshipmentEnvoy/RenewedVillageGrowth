@@ -296,6 +296,42 @@ class MainClass extends GSInfo
             hard_value = 1,
             custom_value = 1,
             flags = CONFIG_BOOLEAN });
+
+        AddSetting({
+            name = "road_network",
+            description = "Road Network Building for Connecting Towns and Industries",
+            easy_value = 1,
+            medium_value = 1,
+            hard_value = 1,
+            custom_value = 1,
+            flags = CONFIG_BOOLEAN });
+
+        AddSetting({
+            name = "road_build_rate",
+            description = "Road Network: Segments to build per month",
+            easy_value = 15,
+            medium_value = 15,
+            hard_value = 15,
+            custom_value = 15,
+            flags = CONFIG_INGAME, min_value = 1, max_value = 50, step_size = 1});
+
+        AddSetting({
+            name = "road_upgrade_rate",
+            description = "Road Network: Segments to upgrade per month",
+            easy_value = 15,
+            medium_value = 15,
+            hard_value = 15,
+            custom_value = 15,
+            flags = CONFIG_INGAME, min_value = 1, max_value = 50, step_size = 1});
+
+        AddSetting({
+            name = "debug_road_signs",
+            description = "Road Network: Show debug signs along roads",
+            easy_value = 0,
+            medium_value = 0,
+            hard_value = 0,
+            custom_value = 0,
+            flags = CONFIG_BOOLEAN | CONFIG_INGAME });
     }
 }
 
