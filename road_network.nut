@@ -23,6 +23,12 @@ K_NEIGHBORS <- 3;
 // Debug visualization
 DEBUG_SIGN_INTERVAL <- 20;  // Place sign every N tiles
 
+// Async pathfinding constants
+PATHFIND_STEP_SIZE <- 1000;       // Iterations per FindPath() call
+PATHFIND_MAX_ITERATIONS <- 200000; // Max total iterations before timeout
+BUILD_SEGMENTS_PER_TICK <- 10;   // Road segments to build per tick
+OPS_SUSPEND_THRESHOLD <- 100;    // Min ops before yielding to game
+
 /* ========== Enums ========== */
 
 // Network state machine states
@@ -46,6 +52,29 @@ enum EdgeType {
     INTRA_REGION = 0,  // Within same region (normal)
     INTER_REGION = 1,  // Between regions (trunk road)
     MAJOR_CITY = 2     // Connected to major city (trunk road)
+}
+
+// Edge build state (for async building)
+enum EdgeBuildState {
+    PENDING = 0,       // Waiting to start
+    PATHFINDING = 1,   // Pathfinding in progress
+    BUILDING = 2,      // Building road segments
+    COMPLETE = 3,      // Successfully built
+    FAILED = 4         // Failed (no path or build error)
+}
+
+// Pathfinding result codes
+enum PathfindResult {
+    CONTINUE = 0,      // Still searching, yield and continue
+    FOUND = 1,         // Path found successfully
+    FAILED = 2         // Pathfinding failed (no path or timeout)
+}
+
+// Build result codes
+enum BuildResult {
+    CONTINUE = 0,      // Still building, yield and continue
+    COMPLETE = 1,      // Build complete
+    FAILED = 2         // Build failed
 }
 
 /* ========== RoadNetwork Class ========== */
@@ -75,7 +104,7 @@ class RoadNetwork {
     
     // Build progress
     build_queue = null;             // Edges waiting to be built
-    current_edge_index = null;      // Current position in build queue
+    current_build_edge_index = null;      // Current position in build queue
     
     // Road type tracking
     current_road_type = null;       // Currently used road type
@@ -88,6 +117,32 @@ class RoadNetwork {
     build_rate = null;              // Edges to build per month
     upgrade_rate = null;            // Edges to upgrade per month
     debug_signs = null;             // Show debug signs
+    
+    // Async build pathfinding state
+    build_pathfinder = null;        // RoadPathFinder instance (persists across ticks)
+    build_edge = null;              // Edge currently being processed
+    build_path = null;              // Found path (array of tiles)
+    build_path_index = null;        // Current position in path building
+    build_pathfind_iterations = null; // Iterations spent on current pathfind
+    
+    // Monthly rate limiting
+    edges_built_this_month = null;  // Edges completed this month
+    last_build_month = null;        // Last month we built (for reset)
+    
+    // Async upgrade state
+    current_upgrade_edge_index = null;   // Current position in trunk_edges for upgrade
+    edges_upgraded_this_month = null; // Edges upgraded this month
+    last_upgrade_month = null;      // Last month we upgraded (for reset)
+    
+    // Async upgrade pathfinding state (similar to build)
+    upgrade_pathfinder = null;      // RoadPathFinder for finding existing road path
+    upgrade_edge = null;            // Edge currently being upgraded
+    upgrade_path = null;            // Found path (array of tiles)
+    upgrade_path_index = null;      // Current position in path upgrading
+    upgrade_pathfind_iterations = null; // Iterations spent on current pathfind
+    
+    // Road type monitoring (yearly check)
+    last_road_type_check_year = null; // Last year road type was checked
 
     constructor(towns_array) {
         this.towns = towns_array;
@@ -101,7 +156,7 @@ class RoadNetwork {
         this.inter_region_edges = [];
         this.trunk_edges = [];
         this.build_queue = [];
-        this.current_edge_index = 0;
+        this.current_build_edge_index = 0;
         this.major_cities = {};
         this.last_decade_update = GSDate.GetYear(GSDate.GetCurrentDate()) / 10;
         
@@ -117,6 +172,32 @@ class RoadNetwork {
         this.build_rate = GSController.GetSetting("road_build_rate");
         this.upgrade_rate = GSController.GetSetting("road_upgrade_rate");
         this.debug_signs = GSController.GetSetting("debug_road_signs");
+        
+        // Initialize async build pathfinding state
+        this.build_pathfinder = null;
+        this.build_edge = null;
+        this.build_path = null;
+        this.build_path_index = 0;
+        this.build_pathfind_iterations = 0;
+        
+        // Initialize monthly rate limiting
+        this.edges_built_this_month = 0;
+        this.last_build_month = GSDate.GetMonth(GSDate.GetCurrentDate());
+        
+        // Initialize async upgrade state
+        this.current_upgrade_edge_index = 0;
+        this.edges_upgraded_this_month = 0;
+        this.last_upgrade_month = GSDate.GetMonth(GSDate.GetCurrentDate());
+        
+        // Initialize async upgrade pathfinding state
+        this.upgrade_pathfinder = null;
+        this.upgrade_edge = null;
+        this.upgrade_path = null;
+        this.upgrade_path_index = 0;
+        this.upgrade_pathfind_iterations = 0;
+        
+        // Initialize road type monitoring (yearly check)
+        this.last_road_type_check_year = GSDate.GetYear(GSDate.GetCurrentDate());
         
         // Calculate region grid size
         this.regions_x = (GSMap.GetMapSizeX() + REGION_SIZE - 1) / REGION_SIZE;
@@ -226,85 +307,322 @@ function RoadNetwork::TownDistance(town_id_a, town_id_b) {
     return GSMap.DistanceManhattan(tile_a, tile_b);
 }
 
-/* ========== Road Building ========== */
+/* ========== Async Pathfinding ========== */
 
-/* Build a single road segment using SuperLib.RoadBuilder */
-function RoadNetwork::BuildRoadSegment(edge) {
+/* Start pathfinding for build */
+function RoadNetwork::StartBuildPathfinding(edge) {
     // Set road type
     GSRoad.SetCurrentRoadType(this.current_road_type);
     
-    // Use SuperLib.RoadBuilder
-    local builder = SuperLib.RoadBuilder();
+    // Create pathfinder instance
+    local pf = SuperLib.RoadPathFinder();
     
-    // Initialize connection task
-    builder.Init(edge.from_tile, edge.to_tile, false, 4000);
+    // Initialize path search
+    pf.InitializePath([edge.from_tile], [edge.to_tile], false);
+    pf.SetMaxIterations(PATHFIND_MAX_ITERATIONS);
+    pf.SetStepSize(PATHFIND_STEP_SIZE);
     
-    // Performance settings
-    builder.SetEstimateMultiplier(1.5);
-    builder.EnableSlowBuilding(true);  // Avoid lag
+    // Store state for continuation
+    this.build_pathfinder = pf;
+    this.build_edge = edge;
+    this.build_path = null;
+    this.build_path_index = 0;
+    this.build_pathfind_iterations = 0;
     
-    // Execute connection
-    local result = builder.ConnectTiles();
+    // Update edge state
+    edge.build_state = EdgeBuildState.PATHFINDING;
     
-    switch (result) {
-        case SuperLib.RoadBuilder.CONNECT_SUCCEEDED:
-            Log.Info("Road built: " + edge.town_a + " -> " + edge.town_b, Log.LVL_DEBUG);
-            return true;
-        case SuperLib.RoadBuilder.CONNECT_FAILED_TIME_OUT:
-            Log.Info("Road timeout: " + edge.town_a + " -> " + edge.town_b, Log.LVL_DEBUG);
-            return false;
-        case SuperLib.RoadBuilder.CONNECT_FAILED_NO_PATH_FOUND:
-            Log.Info("No path: " + edge.town_a + " -> " + edge.town_b, Log.LVL_DEBUG);
-            return false;
-        default:
-            Log.Info("Road failed: " + result, Log.LVL_DEBUG);
-            return false;
-    }
+    Log.Info("Started build pathfinding: " + edge.town_a + " -> " + edge.town_b, Log.LVL_DEBUG);
 }
 
-/* Build multiple road segments up to the rate limit */
-function RoadNetwork::BuildBatch(max_count) {
-    local built = 0;
+/* Continue build pathfinding - returns PathfindResult */
+function RoadNetwork::ContinueBuildPathfinding() {
+    if (this.build_pathfinder == null || this.build_edge == null) {
+        return PathfindResult.FAILED;
+    }
     
+    // Execute one step of pathfinding (PATHFIND_STEP_SIZE iterations)
+    local path = this.build_pathfinder.FindPath();
+    this.build_pathfind_iterations += PATHFIND_STEP_SIZE;
+    
+    // Check result
+    local error = this.build_pathfinder.GetFindPathError();
+    
+    if (path != null) {
+        // Path found!
+        this.build_path = path;
+        Log.Info("Build path found: " + this.build_edge.town_a + " -> " + this.build_edge.town_b + 
+                 " (" + this.build_pathfind_iterations + " iterations)", Log.LVL_DEBUG);
+        return PathfindResult.FOUND;
+    }
+    
+    // Check for errors
+    if (error == SuperLib.RoadPathFinder.PATH_FIND_FAILED_NO_PATH) {
+        Log.Info("No build path: " + this.build_edge.town_a + " -> " + this.build_edge.town_b, Log.LVL_DEBUG);
+        return PathfindResult.FAILED;
+    }
+    
+    if (error == SuperLib.RoadPathFinder.PATH_FIND_FAILED_TIME_OUT) {
+        Log.Info("Build pathfind timeout: " + this.build_edge.town_a + " -> " + this.build_edge.town_b + 
+                 " (" + this.build_pathfind_iterations + " iterations)", Log.LVL_DEBUG);
+        return PathfindResult.FAILED;
+    }
+    
+    // Still searching (PATH_FIND_NO_ERROR with null path means continue)
+    return PathfindResult.CONTINUE;
+}
+
+/* Build road segments incrementally - returns BuildResult */
+function RoadNetwork::BuildRoadSegments() {
+    if (this.build_path == null || this.build_edge == null) {
+        return BuildResult.FAILED;
+    }
+    
+    // Set road type
+    GSRoad.SetCurrentRoadType(this.current_road_type);
+    
+    local segments_built = 0;
+    local path = this.build_path;
+    
+    // SuperLib path is a linked list: path.GetTile(), path.GetParent()
+    // We need to traverse and build segments
+    
+    // First, convert path to array if not done yet (only on first call)
+    if (typeof path != "array") {
+        local path_array = [];
+        local node = path;
+        while (node != null) {
+            path_array.append(node.GetTile());
+            node = node.GetParent();
+        }
+        // Reverse so it goes from start to end
+        path_array.reverse();
+        this.build_path = path_array;
+        path = this.build_path;
+    }
+    
+    // Build segments from current position
+    while (this.build_path_index < path.len() - 1 && segments_built < BUILD_SEGMENTS_PER_TICK) {
+        local from_tile = path[this.build_path_index];
+        local to_tile = path[this.build_path_index + 1];
+        
+        // Check ops budget
+        if (GSController.GetOpsTillSuspend() < OPS_SUSPEND_THRESHOLD) {
+            return BuildResult.CONTINUE;  // Yield and continue later
+        }
+        
+        // Build road segment (handle both road and bridge/tunnel)
+        local built = false;
+        
+        // Check if it's a bridge or tunnel
+        if (GSBridge.IsBridgeTile(from_tile) || GSTunnel.IsTunnelTile(from_tile)) {
+            // Skip - already built as part of pathfinder's plan
+            built = true;
+        } else if (GSMap.DistanceManhattan(from_tile, to_tile) > 1) {
+            // Non-adjacent tiles - likely a bridge or tunnel needed
+            // Check if this should be a tunnel (tunnel endpoint matches to_tile)
+            if (GSTunnel.GetOtherTunnelEnd(from_tile) == to_tile) {
+                // Demolish existing road if present (required for tunnel construction)
+                if (GSRoad.IsRoadTile(from_tile)) {
+                    GSTile.DemolishTile(from_tile);
+                }
+                // Build tunnel - the landscape allows it
+                built = GSTunnel.BuildTunnel(GSVehicle.VT_ROAD, from_tile);
+                if (!built) {
+                    Log.Info("Tunnel build failed: " + GSError.GetLastErrorString(), Log.LVL_DEBUG);
+                }
+            } else {
+                // Try to build bridge
+                local bridge_list = GSBridgeList_Length(GSMap.DistanceManhattan(from_tile, to_tile) + 1);
+                if (bridge_list.Count() > 0) {
+                    bridge_list.Valuate(GSBridge.GetMaxSpeed);
+                    bridge_list.Sort(GSList.SORT_BY_VALUE, false);
+                    built = GSBridge.BuildBridge(GSVehicle.VT_ROAD, bridge_list.Begin(), from_tile, to_tile);
+                }
+                if (!built) {
+                    Log.Info("Bridge build failed: " + GSError.GetLastErrorString(), Log.LVL_DEBUG);
+                }
+            }
+        } else {
+            // Normal road segment
+            built = GSRoad.BuildRoad(from_tile, to_tile);
+            if (!built) {
+                // Maybe road already exists, check error
+                local error = GSError.GetLastError();
+                if (error == GSError.ERR_ALREADY_BUILT || GSRoad.AreRoadTilesConnected(from_tile, to_tile)) {
+                    built = true;  // Already connected, that's fine
+                }
+            }
+            
+            // Check if we just built/connected road over a railway - convert to bridge
+            if (built && GSTile.HasTransportType(to_tile, GSTile.TRANSPORT_RAIL)) {
+                local bridge_result = SuperLib.Road.ConvertRailCrossingToBridge(to_tile, from_tile);
+                if (bridge_result.succeeded) {
+                    Log.Info("Converted rail crossing to bridge at tile " + to_tile, Log.LVL_DEBUG);
+                }
+            }
+        }
+        
+        this.build_path_index++;
+        segments_built++;
+        
+        // Continue even if single segment fails (terrain might already have road)
+    }
+    
+    // Check if done
+    if (this.build_path_index >= path.len() - 1) {
+        Log.Info("Road built: " + this.build_edge.town_a + " -> " + this.build_edge.town_b + 
+                 " (" + path.len() + " tiles)", Log.LVL_DEBUG);
+        return BuildResult.COMPLETE;
+    }
+    
+    return BuildResult.CONTINUE;
+}
+
+/* Reset async build pathfinding state */
+function RoadNetwork::ResetBuildAsyncState() {
+    this.build_pathfinder = null;
+    this.build_edge = null;
+    this.build_path = null;
+    this.build_path_index = 0;
+    this.build_pathfind_iterations = 0;
+}
+
+/* Get next pending edge from build queue */
+function RoadNetwork::GetNextPendingBuildEdge() {
+    while (this.current_build_edge_index < this.build_queue.len()) {
+        local edge = this.build_queue[this.current_build_edge_index];
+        
+        // Initialize build_state if not present (backward compatibility)
+        if (!("build_state" in edge)) {
+            edge.build_state <- EdgeBuildState.PENDING;
+        }
+        
+        // Check if this edge needs processing
+        if (edge.build_state == EdgeBuildState.PENDING && edge.status == EdgeStatus.PENDING) {
+            return edge;
+        }
+        
+        this.current_build_edge_index++;
+    }
+    return null;  // All edges processed
+}
+
+/* Async build - process one unit of work then yield
+ * Returns: true if still working, false if all done or blocked
+ */
+function RoadNetwork::BuildBatchAsync() {
     // Refresh debug_signs setting to allow runtime toggle
     this.debug_signs = GSController.GetSetting("debug_road_signs");
     
-    while (this.current_edge_index < this.build_queue.len() && built < max_count) {
-        local edge = this.build_queue[this.current_edge_index];
-        
-        // Skip already processed edges
-        if (edge.status != EdgeStatus.PENDING) {
-            this.current_edge_index++;
-            continue;
-        }
-        
-        // Check ops budget
-        if (GSController.GetOpsTillSuspend() < 1000) {
-            GSController.Sleep(1);
-        }
-        
-        // Mark as building
-        edge.status = EdgeStatus.BUILDING;
-        
-        // Attempt to build
-        if (this.BuildRoadSegment(edge)) {
-            edge.status = EdgeStatus.BUILT;
-            this.stats.edges_built++;
-            built++;
-        } else {
-            edge.status = EdgeStatus.FAILED;
-            this.stats.edges_failed++;
-        }
-        
-        // Debug visualization (regardless of success/failure)
-        if (this.debug_signs) {
-            this.DebugMarkEdge(edge);
-        }
-        
-        this.current_edge_index++;
+    // Check monthly rate limit
+    local current_month = GSDate.GetMonth(GSDate.GetCurrentDate());
+    if (current_month != this.last_build_month) {
+        // New month - reset counter
+        this.edges_built_this_month = 0;
+        this.last_build_month = current_month;
     }
     
-    return built;
+    // If reached monthly limit, pause (but keep current edge in progress)
+    if (this.build_edge == null && this.edges_built_this_month >= this.build_rate) {
+        return true;  // Still have work, but waiting for next month
+    }
+    
+    // Check ops budget before starting
+    if (GSController.GetOpsTillSuspend() < OPS_SUSPEND_THRESHOLD) {
+        return true;  // Still working, but yield now
+    }
+    
+    // If no current edge, get the next one
+    if (this.build_edge == null) {
+        local edge = this.GetNextPendingBuildEdge();
+        if (edge == null) {
+            return false;  // All edges processed
+        }
+        this.StartBuildPathfinding(edge);
+        return true;  // Started new edge, yield to let game process
+    }
+    
+    // Process current edge based on its state
+    local edge = this.build_edge;
+    
+    switch (edge.build_state) {
+        case EdgeBuildState.PATHFINDING: {
+            local result = this.ContinueBuildPathfinding();
+            
+            switch (result) {
+                case PathfindResult.CONTINUE:
+                    // Still pathfinding, will continue next tick
+                    return true;
+                    
+                case PathfindResult.FOUND:
+                    // Move to building phase
+                    edge.build_state = EdgeBuildState.BUILDING;
+                    return true;
+                    
+                case PathfindResult.FAILED:
+                    // Mark edge as failed
+                    edge.build_state = EdgeBuildState.FAILED;
+                    edge.status = EdgeStatus.FAILED;
+                    this.stats.edges_failed++;
+                    if (this.debug_signs) {
+                        this.DebugMarkEdge(edge);
+                    }
+                    // Move to next edge
+                    this.current_build_edge_index++;
+                    this.ResetBuildAsyncState();
+                    return true;
+            }
+            break;
+        }
+        
+        case EdgeBuildState.BUILDING: {
+            local result = this.BuildRoadSegments();
+            
+            switch (result) {
+                case BuildResult.CONTINUE:
+                    // Still building, will continue next tick
+                    return true;
+                    
+                case BuildResult.COMPLETE:
+                    // Mark edge as complete
+                    edge.build_state = EdgeBuildState.COMPLETE;
+                    edge.status = EdgeStatus.BUILT;
+                    this.stats.edges_built++;
+                    this.edges_built_this_month++;  // Count for monthly rate limit
+                    if (this.debug_signs) {
+                        this.DebugMarkEdge(edge);
+                    }
+                    // Move to next edge
+                    this.current_build_edge_index++;
+                    this.ResetBuildAsyncState();
+                    return true;
+                    
+                case BuildResult.FAILED:
+                    // Mark edge as failed
+                    edge.build_state = EdgeBuildState.FAILED;
+                    edge.status = EdgeStatus.FAILED;
+                    this.stats.edges_failed++;
+                    if (this.debug_signs) {
+                        this.DebugMarkEdge(edge);
+                    }
+                    // Move to next edge
+                    this.current_build_edge_index++;
+                    this.ResetBuildAsyncState();
+                    return true;
+            }
+            break;
+        }
+        
+        default:
+            // Unexpected state, reset
+            Log.Warning("Unexpected edge build state: " + edge.build_state);
+            this.current_build_edge_index++;
+            this.ResetBuildAsyncState();
+            return true;
+    }
+    
+    return true;
 }
 
 /* Debug visualization - mark edge with signs */
@@ -557,10 +875,18 @@ function RoadNetwork::FindBestRoadType() {
 function RoadNetwork::Save() {
     local save_data = {
         state = this.state,
-        current_edge_index = this.current_edge_index,
+        current_build_edge_index = this.current_build_edge_index,
         stats = this.stats,
         current_road_type = this.current_road_type,
-        last_decade_update = this.last_decade_update
+        last_decade_update = this.last_decade_update,
+        edges_built_this_month = this.edges_built_this_month,
+        last_build_month = this.last_build_month,
+        // Upgrade state
+        current_upgrade_edge_index = this.current_upgrade_edge_index,
+        edges_upgraded_this_month = this.edges_upgraded_this_month,
+        last_upgrade_month = this.last_upgrade_month,
+        // Road type monitoring
+        last_road_type_check_year = this.last_road_type_check_year
     };
     
     // Save major cities as array (tables can't be saved directly)
@@ -569,11 +895,21 @@ function RoadNetwork::Save() {
         save_data.major_cities_list.append(town_id);
     }
     
-    // Save edge statuses
+    // Save edge statuses and build states
     save_data.edge_statuses <- [];
+    save_data.edge_build_states <- [];
     foreach (edge in this.build_queue) {
         save_data.edge_statuses.append(edge.status);
+        // Save build_state if exists, otherwise default to PENDING
+        if ("build_state" in edge) {
+            save_data.edge_build_states.append(edge.build_state);
+        } else {
+            save_data.edge_build_states.append(EdgeBuildState.PENDING);
+        }
     }
+    
+    // Note: current_pathfinder, current_path cannot be serialized
+    // They will be reset on load
     
     return save_data;
 }
@@ -582,12 +918,24 @@ function RoadNetwork::Load(data) {
     if (data == null) return;
     
     if (data.rawin("state")) this.state = data.state;
-    if (data.rawin("current_edge_index")) this.current_edge_index = data.current_edge_index;
+    if (data.rawin("current_build_edge_index")) this.current_build_edge_index = data.current_build_edge_index;
     if (data.rawin("stats")) this.stats = data.stats;
     if (data.rawin("current_road_type")) this.current_road_type = data.current_road_type;
     if (data.rawin("last_decade_update")) this.last_decade_update = data.last_decade_update;
     // Legacy compatibility: convert yearly to decade
     else if (data.rawin("last_yearly_update")) this.last_decade_update = data.last_yearly_update / 10;
+    
+    // Restore monthly rate limiting
+    if (data.rawin("edges_built_this_month")) this.edges_built_this_month = data.edges_built_this_month;
+    if (data.rawin("last_build_month")) this.last_build_month = data.last_build_month;
+    
+    // Restore upgrade state
+    if (data.rawin("current_upgrade_edge_index")) this.current_upgrade_edge_index = data.current_upgrade_edge_index;
+    if (data.rawin("edges_upgraded_this_month")) this.edges_upgraded_this_month = data.edges_upgraded_this_month;
+    if (data.rawin("last_upgrade_month")) this.last_upgrade_month = data.last_upgrade_month;
+    
+    // Restore road type monitoring
+    if (data.rawin("last_road_type_check_year")) this.last_road_type_check_year = data.last_road_type_check_year;
     
     // Restore major cities from array
     if (data.rawin("major_cities_list")) {
@@ -596,6 +944,15 @@ function RoadNetwork::Load(data) {
             this.major_cities[town_id] <- true;
         }
     }
+    
+    // Reset async build pathfinding state (cannot be restored from save)
+    this.ResetBuildAsyncState();
+    
+    // Reset async upgrade pathfinding state (cannot be restored from save)
+    this.ResetUpgradeAsyncState();
+    
+    // Note: edge_build_states will be restored after build_queue is rebuilt in DoInit
+    // Any in-progress pathfinding will restart from scratch
     
     Log.Info("RoadNetwork loaded: state=" + this.state, Log.LVL_INFO);
 }
@@ -761,24 +1118,26 @@ function RoadNetwork::PrepareBuildQueue() {
         this.build_queue.append(edge);
     }
     
-    this.current_edge_index = 0;
+    this.current_build_edge_index = 0;
     
     Log.Info("Trunk edges: " + this.trunk_edges.len() + ", Regular edges: " + normal_priority.len(), Log.LVL_DEBUG);
 }
 
 function RoadNetwork::DoBuilding() {
-    // Build up to build_rate edges
-    local built = this.BuildBatch(this.build_rate);
+    // Process one unit of work (async, yields between iterations)
+    local still_working = this.BuildBatchAsync();
     
-    if (built > 0) {
-        Log.Info("RoadNetwork: Built " + built + " roads (" + 
-                 this.stats.edges_built + "/" + this.stats.edges_planned + ")", Log.LVL_DEBUG);
+    // Log progress periodically
+    if (this.stats.edges_built > 0 && this.stats.edges_built % 10 == 0) {
+        Log.Info("RoadNetwork: Progress " + this.stats.edges_built + "/" + this.stats.edges_planned + 
+                 " (failed: " + this.stats.edges_failed + ")", Log.LVL_DEBUG);
     }
     
     // Check if all edges are processed
-    if (this.current_edge_index >= this.build_queue.len()) {
+    if (!still_working && this.build_edge == null) {
         Log.Info("RoadNetwork: Building complete! Built: " + this.stats.edges_built + 
                  ", Failed: " + this.stats.edges_failed, Log.LVL_INFO);
+        this.ResetBuildAsyncState();
         this.state = NetworkState.MONITORING;
     }
 }
@@ -791,7 +1150,11 @@ function RoadNetwork::DoMonitoring() {
         this.last_decade_update = current_decade;
     }
     
-    // Check for new road types periodically
+    // Check for new road types yearly
+    local current_year = GSDate.GetYear(GSDate.GetCurrentDate());
+    if (current_year <= this.last_road_type_check_year) return;
+    this.last_road_type_check_year = current_year;
+    
     local new_best = this.FindBestRoadType();
     
     if (new_best != null && new_best != this.best_road_type) {
@@ -955,17 +1318,19 @@ function RoadNetwork::RebuildFailedEdges() {
 }
 
 function RoadNetwork::DoUpgrading() {
-    // Upgrade trunk roads to better road type
-    local upgraded = this.UpgradeBatch(this.upgrade_rate);
+    // Process one upgrade (async, yields between iterations)
+    local still_working = this.UpgradeBatchAsync();
     
-    if (upgraded > 0) {
-        Log.Info("RoadNetwork: Upgraded " + upgraded + " trunk road segments", Log.LVL_DEBUG);
+    // Log progress periodically
+    if (this.stats.edges_upgraded > 0 && this.stats.edges_upgraded % 10 == 0) {
+        Log.Info("RoadNetwork: Upgrade progress " + this.current_upgrade_edge_index + "/" + this.trunk_edges.len(), Log.LVL_DEBUG);
     }
     
-    // Check if upgrade is complete
-    if (this.current_edge_index >= this.trunk_edges.len()) {
+    // Check if upgrade is complete (no more work AND no edge in progress)
+    if (!still_working && this.upgrade_edge == null) {
         Log.Info("RoadNetwork: Trunk road upgrade complete! Upgraded: " + this.stats.edges_upgraded, Log.LVL_INFO);
-        this.current_edge_index = 0;  // Reset for next upgrade cycle
+        this.current_upgrade_edge_index = 0;  // Reset for next upgrade cycle
+        this.ResetUpgradeAsyncState();
         this.state = NetworkState.MONITORING;
     }
 }
@@ -975,37 +1340,294 @@ function RoadNetwork::PrepareUpgradeQueue() {
     // Rebuild trunk edges list to only include current trunk roads
     this.RebuildTrunkEdgesList();
     
-    this.current_edge_index = 0;
+    // Reset upgrade state
+    this.current_upgrade_edge_index = 0;
+    this.edges_upgraded_this_month = 0;
+    this.last_upgrade_month = GSDate.GetMonth(GSDate.GetCurrentDate());
+    
+    // Reset async upgrade pathfinding state
+    this.ResetUpgradeAsyncState();
+    
+    // Reset upgrade_state for all trunk edges
+    foreach (edge in this.trunk_edges) {
+        if (!("upgrade_state" in edge)) {
+            edge.upgrade_state <- EdgeBuildState.PENDING;
+        } else {
+            edge.upgrade_state = EdgeBuildState.PENDING;
+        }
+    }
     
     Log.Info("RoadNetwork: Preparing to upgrade " + this.trunk_edges.len() + " trunk roads", Log.LVL_INFO);
 }
 
-/* Upgrade a batch of trunk roads */
-function RoadNetwork::UpgradeBatch(max_count) {
-    local upgraded = 0;
-    
+/* Reset async upgrade pathfinding state */
+function RoadNetwork::ResetUpgradeAsyncState() {
+    this.upgrade_pathfinder = null;
+    this.upgrade_edge = null;
+    this.upgrade_path = null;
+    this.upgrade_path_index = 0;
+    this.upgrade_pathfind_iterations = 0;
+}
+
+/* Start pathfinding for upgrade - find existing road path */
+function RoadNetwork::StartUpgradePathfinding(edge) {
+    // Set road type
     GSRoad.SetCurrentRoadType(this.current_road_type);
     
-    while (this.current_edge_index < this.trunk_edges.len() && upgraded < max_count) {
-        local edge = this.trunk_edges[this.current_edge_index];
+    // Create pathfinder instance
+    local pf = SuperLib.RoadPathFinder();
+    
+    // Initialize path search - use repair_existing=true to strongly prefer existing roads
+    pf.InitializePath([edge.from_tile], [edge.to_tile], true);
+    pf.SetMaxIterations(PATHFIND_MAX_ITERATIONS);
+    pf.SetStepSize(PATHFIND_STEP_SIZE);
+    
+    // Store state for continuation
+    this.upgrade_pathfinder = pf;
+    this.upgrade_edge = edge;
+    this.upgrade_path = null;
+    this.upgrade_path_index = 0;
+    this.upgrade_pathfind_iterations = 0;
+    
+    // Update edge state
+    edge.upgrade_state = EdgeBuildState.PATHFINDING;
+    
+    Log.Info("Started upgrade pathfinding: " + edge.town_a + " -> " + edge.town_b, Log.LVL_DEBUG);
+}
+
+/* Continue upgrade pathfinding - returns PathfindResult */
+function RoadNetwork::ContinueUpgradePathfinding() {
+    if (this.upgrade_pathfinder == null || this.upgrade_edge == null) {
+        return PathfindResult.FAILED;
+    }
+    
+    // Execute one step of pathfinding
+    local path = this.upgrade_pathfinder.FindPath();
+    this.upgrade_pathfind_iterations += PATHFIND_STEP_SIZE;
+    
+    // Check result
+    local error = this.upgrade_pathfinder.GetFindPathError();
+    
+    if (path != null) {
+        // Path found!
+        this.upgrade_path = path;
+        Log.Info("Upgrade path found: " + this.upgrade_edge.town_a + " -> " + this.upgrade_edge.town_b + 
+                 " (" + this.upgrade_pathfind_iterations + " iterations)", Log.LVL_DEBUG);
+        return PathfindResult.FOUND;
+    }
+    
+    // Check for errors
+    if (error == SuperLib.RoadPathFinder.PATH_FIND_FAILED_NO_PATH) {
+        Log.Info("No upgrade path: " + this.upgrade_edge.town_a + " -> " + this.upgrade_edge.town_b, Log.LVL_DEBUG);
+        return PathfindResult.FAILED;
+    }
+    
+    if (error == SuperLib.RoadPathFinder.PATH_FIND_FAILED_TIME_OUT) {
+        Log.Info("Upgrade pathfind timeout: " + this.upgrade_edge.town_a + " -> " + this.upgrade_edge.town_b, Log.LVL_DEBUG);
+        return PathfindResult.FAILED;
+    }
+    
+    // Still searching
+    return PathfindResult.CONTINUE;
+}
+
+/* Upgrade road segments incrementally - returns BuildResult */
+function RoadNetwork::UpgradeRoadSegments() {
+    if (this.upgrade_path == null || this.upgrade_edge == null) {
+        return BuildResult.FAILED;
+    }
+    
+    // Set road type
+    GSRoad.SetCurrentRoadType(this.current_road_type);
+    
+    local segments_upgraded = 0;
+    local path = this.upgrade_path;
+    
+    // Convert path to array if not done yet
+    if (typeof path != "array") {
+        local path_array = [];
+        local node = path;
+        while (node != null) {
+            path_array.append(node.GetTile());
+            node = node.GetParent();
+        }
+        path_array.reverse();
+        this.upgrade_path = path_array;
+        path = this.upgrade_path;
+    }
+    
+    // Upgrade segments from current position
+    while (this.upgrade_path_index < path.len() - 1 && segments_upgraded < BUILD_SEGMENTS_PER_TICK) {
+        local from_tile = path[this.upgrade_path_index];
+        local to_tile = path[this.upgrade_path_index + 1];
         
         // Check ops budget
-        if (GSController.GetOpsTillSuspend() < 500) {
-            GSController.Sleep(1);
+        if (GSController.GetOpsTillSuspend() < OPS_SUSPEND_THRESHOLD) {
+            return BuildResult.CONTINUE;
         }
         
-        // Try to convert road type
-        if (edge.status == EdgeStatus.BUILT) {
-            // Use simple conversion - SuperLib's builder might have used different paths
-            // so we just try to connect again with the new road type
-            if (GSRoad.ConvertRoadType(edge.from_tile, edge.to_tile, this.current_road_type)) {
-                upgraded++;
-                this.stats.edges_upgraded++;
+        // Convert road type for this segment
+        if (GSMap.DistanceManhattan(from_tile, to_tile) == 1) {
+            // Adjacent tiles - convert road type directly
+            GSRoad.ConvertRoadType(from_tile, to_tile, this.current_road_type);
+        } else if (GSBridge.IsBridgeTile(from_tile)) {
+            // Bridge detected - check if we can upgrade to a faster bridge
+            local other_end = GSBridge.GetOtherBridgeEnd(from_tile);
+            local current_bridge_type = GSBridge.GetBridgeType(from_tile);
+            local current_speed = GSBridge.GetMaxSpeed(current_bridge_type);
+            if (current_speed == 0) current_speed = 65535;
+            
+            // Find a faster bridge
+            local bridge_length = GSMap.DistanceManhattan(from_tile, other_end) + 1;
+            local bridge_list = GSBridgeList_Length(bridge_length);
+            bridge_list.Valuate(GSBridge.GetMaxSpeed);
+            bridge_list.KeepAboveValue(current_speed);
+            
+            if (!bridge_list.IsEmpty()) {
+                // Sort by speed descending and pick the fastest
+                bridge_list.Sort(GSList.SORT_BY_VALUE, false);
+                local new_bridge_type = bridge_list.Begin();
+                
+                // Rebuild bridge with faster type
+                if (GSBridge.BuildBridge(GSVehicle.VT_ROAD, new_bridge_type, from_tile, other_end)) {
+                    local new_speed = GSBridge.GetMaxSpeed(new_bridge_type);
+                    Log.Info("Upgraded bridge: speed " + current_speed + " -> " + new_speed, Log.LVL_DEBUG);
+                }
+            }
+            
+            // Skip to end of bridge in path
+            while (this.upgrade_path_index < path.len() - 1 && path[this.upgrade_path_index] != other_end) {
+                this.upgrade_path_index++;
+            }
+        } else if (GSTunnel.IsTunnelTile(from_tile)) {
+            // Tunnel detected - skip to other end (tunnels have no speed limit)
+            local other_end = GSTunnel.GetOtherTunnelEnd(from_tile);
+            while (this.upgrade_path_index < path.len() - 1 && path[this.upgrade_path_index] != other_end) {
+                this.upgrade_path_index++;
             }
         }
         
-        this.current_edge_index++;
+        this.upgrade_path_index++;
+        segments_upgraded++;
     }
     
-    return upgraded;
+    // Check if done
+    if (this.upgrade_path_index >= path.len() - 1) {
+        Log.Info("Road upgraded: " + this.upgrade_edge.town_a + " -> " + this.upgrade_edge.town_b + 
+                 " (" + path.len() + " tiles)", Log.LVL_DEBUG);
+        return BuildResult.COMPLETE;
+    }
+    
+    return BuildResult.CONTINUE;
+}
+
+/* Get next pending edge from upgrade queue */
+function RoadNetwork::GetNextPendingUpgradeEdge() {
+    while (this.current_upgrade_edge_index < this.trunk_edges.len()) {
+        local edge = this.trunk_edges[this.current_upgrade_edge_index];
+        
+        // Initialize upgrade_state if not present
+        if (!("upgrade_state" in edge)) {
+            edge.upgrade_state <- EdgeBuildState.PENDING;
+        }
+        
+        // Check if this edge needs processing
+        if (edge.upgrade_state == EdgeBuildState.PENDING && edge.status == EdgeStatus.BUILT) {
+            return edge;
+        }
+        
+        this.current_upgrade_edge_index++;
+    }
+    return null;
+}
+
+/* Async upgrade - process one unit of work then yield
+ * Returns: true if still working, false if all done
+ */
+function RoadNetwork::UpgradeBatchAsync() {
+    // Check monthly rate limit
+    local current_month = GSDate.GetMonth(GSDate.GetCurrentDate());
+    if (current_month != this.last_upgrade_month) {
+        // New month - reset counter
+        this.edges_upgraded_this_month = 0;
+        this.last_upgrade_month = current_month;
+    }
+    
+    // If reached monthly limit, pause (but keep current edge in progress)
+    if (this.upgrade_edge == null && this.edges_upgraded_this_month >= this.upgrade_rate) {
+        return true;  // Still have work, but waiting for next month
+    }
+    
+    // Check ops budget before starting
+    if (GSController.GetOpsTillSuspend() < OPS_SUSPEND_THRESHOLD) {
+        return true;  // Still working, but yield now
+    }
+    
+    // If no current edge, get the next one
+    if (this.upgrade_edge == null) {
+        local edge = this.GetNextPendingUpgradeEdge();
+        if (edge == null) {
+            return false;  // All edges processed
+        }
+        this.StartUpgradePathfinding(edge);
+        return true;
+    }
+    
+    // Process current edge based on its state
+    local edge = this.upgrade_edge;
+    
+    switch (edge.upgrade_state) {
+        case EdgeBuildState.PATHFINDING: {
+            local result = this.ContinueUpgradePathfinding();
+            
+            switch (result) {
+                case PathfindResult.CONTINUE:
+                    return true;
+                    
+                case PathfindResult.FOUND:
+                    edge.upgrade_state = EdgeBuildState.BUILDING;
+                    return true;
+                    
+                case PathfindResult.FAILED:
+                    edge.upgrade_state = EdgeBuildState.FAILED;
+                    Log.Warning("Failed to find upgrade path for edge: " + edge.town_a + " -> " + edge.town_b);
+                    this.current_upgrade_edge_index++;
+                    this.ResetUpgradeAsyncState();
+                    return true;
+            }
+            break;
+        }
+        
+        case EdgeBuildState.BUILDING: {
+            local result = this.UpgradeRoadSegments();
+            
+            switch (result) {
+                case BuildResult.CONTINUE:
+                    return true;
+                    
+                case BuildResult.COMPLETE:
+                    edge.upgrade_state = EdgeBuildState.COMPLETE;
+                    this.stats.edges_upgraded++;
+                    this.edges_upgraded_this_month++;
+                    this.current_upgrade_edge_index++;
+                    this.ResetUpgradeAsyncState();
+                    return true;
+                    
+                case BuildResult.FAILED:
+                    edge.upgrade_state = EdgeBuildState.FAILED;
+                    this.current_upgrade_edge_index++;
+                    this.ResetUpgradeAsyncState();
+                    return true;
+            }
+            break;
+        }
+        
+        default:
+            Log.Warning("Unexpected upgrade edge state: " + edge.upgrade_state);
+            this.current_upgrade_edge_index++;
+            this.ResetUpgradeAsyncState();
+            return true;
+    }
+    
+    return true;
 }
