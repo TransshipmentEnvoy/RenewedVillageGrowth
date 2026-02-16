@@ -127,6 +127,17 @@ function _RoadPathFinder_private_CustomRPF::_Neighbours(self, path, cur_node)
         if(bridge_length <= 2) continue; // Nothing to bridge over
         if(!SuperLib.Tile.IsStraight(cur_node, i_tile)) continue; // Detect map warp-arounds
 
+        /* Check that the approach direction matches the bridge direction.
+         * When we build a bridge from flat land, OpenTTD creates a ramp at cur_node.
+         * If the previous tile (path.GetParent()) is not aligned with the bridge direction,
+         * the road would connect to the ramp from the side. */
+        if (path.GetParent() != null) {
+            local prev_tile = path.GetParent().GetTile();
+            local approach_dir = cur_node - prev_tile;
+            // approach_dir must match offset (bridge direction)
+            if (approach_dir != offset) continue;
+        }
+
         local bridge_list = GSBridgeList_Length(bridge_length);
         if(bridge_list.IsEmpty() || !GSBridge.BuildBridge(GSVehicle.VT_ROAD, bridge_list.Begin(), cur_node, i_tile)) {
             continue; // not possible to build bridge here

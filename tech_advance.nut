@@ -409,7 +409,7 @@ function TechAdvance::CheckNewAvailableEngines() {
         if (engine_info.intro_date > 0 && 
             engine_info.intro_date >= GSDate.GetDate(current_year - 1, 1, 1) &&
             engine_info.intro_date <= current_date) {
-            Log.Info("TechAdvance: New engine available: " + engine_info.name + " (ID: " + engine_id + ")", Log.LVL_INFO);
+            Log.Info("TechAdvance: New engine available: " + engine_info.name + " (ID: " + engine_id + ")", Log.LVL_DEBUG);
             new_engines_available = true;
         }
     }
