@@ -153,6 +153,9 @@ function RoadNetworkLocal::IsWaterIndustry(industry_id) {
  * which is not buildable. We need tiles ADJACENT to the industry that
  * are either buildable or already have roads.
  * 
+ * Uses test mode to verify tiles are actually buildable, making the detection
+ * more tolerant of edge cases.
+ * 
  * @param industry_id The industry to find goal tiles for
  * @return Array of valid goal tiles, or empty array if none found
  */
@@ -208,17 +211,55 @@ function RoadNetworkLocal::GetIndustryGoalTiles(industry_id) {
             // Skip water tiles
             if (GSTile.IsWaterTile(adjacent)) continue;
             
-            // Accept tiles that are buildable or already have roads
-            if (GSTile.IsBuildable(adjacent) || GSRoad.IsRoadTile(adjacent)) {
-                // Check if already added
-                local already_added = false;
-                foreach (existing in goal_tiles) {
-                    if (existing == adjacent) {
-                        already_added = true;
+            // Check if already added
+            local already_added = false;
+            foreach (existing in goal_tiles) {
+                if (existing == adjacent) {
+                    already_added = true;
+                    break;
+                }
+            }
+            if (already_added) continue;
+            
+            // Check tile owner - GameScript builds roads owned by town
+            // Only accept tiles owned by town (COMPANY_INVALID) or unowned
+            local tile_owner = GSTile.GetOwner(adjacent);
+            if (tile_owner != GSCompany.COMPANY_INVALID) {
+                // Tile is owned by a company, skip it
+                continue;
+            }
+            
+            // Accept tiles that already have roads
+            if (GSRoad.IsRoadTile(adjacent)) {
+                goal_tiles.append(adjacent);
+                continue;
+            }
+            
+            // For buildable tiles, use test mode to verify we can actually build a road there
+            // This makes detection more tolerant of edge cases like slopes, ownership, etc.
+            if (GSTile.IsBuildable(adjacent)) {
+                local test_mode = GSTestMode();
+                local can_build = false;
+                
+                // Set road type for testing
+                if (this.current_road_type != null) {
+                    GSRoad.SetCurrentRoadType(this.current_road_type);
+                }
+                
+                // Test if we can build roads in different directions at this tile
+                // Try building towards each adjacent tile to verify it's accessible
+                foreach (test_offset in offsets) {
+                    local test_adjacent = adjacent + test_offset;
+                    if (!GSMap.IsValidTile(test_adjacent)) continue;
+                    
+                    // Test building a road piece to verify the tile is accessible
+                    if (GSRoad.BuildRoad(adjacent, test_adjacent)) {
+                        can_build = true;
                         break;
                     }
                 }
-                if (!already_added) {
+                
+                if (can_build) {
                     goal_tiles.append(adjacent);
                 }
             }
