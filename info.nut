@@ -332,6 +332,25 @@ class MainClass extends GSInfo
             hard_value = 0,
             custom_value = 0,
             flags = CONFIG_BOOLEAN | CONFIG_INGAME });
+
+        AddSetting({
+            name = "road_network_local",
+            description = "Local Road Network: Connect towns to nearby industries",
+            easy_value = 1,
+            medium_value = 1,
+            hard_value = 1,
+            custom_value = 1,
+            flags = CONFIG_BOOLEAN });
+
+        AddSetting({
+            name = "local_road_build_rate",
+            description = "Local Road Network: Towns to process per month",
+            easy_value = 10,
+            medium_value = 10,
+            hard_value = 10,
+            custom_value = 10,
+            flags = CONFIG_INGAME, min_value = 1, max_value = 50, step_size = 1});
+
     }
 }
 

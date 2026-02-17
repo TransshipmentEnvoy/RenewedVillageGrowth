@@ -332,7 +332,7 @@ function RoadNetwork::StartBuildPathfinding(edge) {
     // Update edge state
     edge.build_state = EdgeBuildState.PATHFINDING;
     
-    Log.Info("Started build pathfinding: " + edge.town_a + " -> " + edge.town_b, Log.LVL_DEBUG);
+    Log.Info("Started build pathfinding: " + GSTown.GetName(edge.town_a) + "(" + edge.town_a + ") -> " + GSTown.GetName(edge.town_b) + "(" + edge.town_b + ")", Log.LVL_DEBUG);
 }
 
 /* Continue build pathfinding - returns PathfindResult */
@@ -351,20 +351,20 @@ function RoadNetwork::ContinueBuildPathfinding() {
     if (path != null) {
         // Path found!
         this.build_path = path;
-        Log.Info("Build path found: " + this.build_edge.town_a + " -> " + this.build_edge.town_b + 
-                 " (" + this.build_pathfind_iterations + " iterations)", Log.LVL_DEBUG);
+        Log.Info("Build path found: " + GSTown.GetName(this.build_edge.town_a) + "(" + this.build_edge.town_a + ") -> " + GSTown.GetName(this.build_edge.town_b) + "(" + this.build_edge.town_b + ") " +
+                 "(" + this.build_pathfind_iterations + " iterations)", Log.LVL_DEBUG);
         return PathfindResult.FOUND;
     }
     
     // Check for errors
     if (error == RoadPathFinder.PATH_FIND_FAILED_NO_PATH) {
-        Log.Info("No build path: " + this.build_edge.town_a + " -> " + this.build_edge.town_b, Log.LVL_DEBUG);
+        Log.Info("No build path: " + GSTown.GetName(this.build_edge.town_a) + "(" + this.build_edge.town_a + ") -> " + GSTown.GetName(this.build_edge.town_b) + "(" + this.build_edge.town_b + ")", Log.LVL_DEBUG);
         return PathfindResult.FAILED;
     }
     
     if (error == RoadPathFinder.PATH_FIND_FAILED_TIME_OUT) {
-        Log.Info("Build pathfind timeout: " + this.build_edge.town_a + " -> " + this.build_edge.town_b + 
-                 " (" + this.build_pathfind_iterations + " iterations)", Log.LVL_DEBUG);
+        Log.Info("Build pathfind timeout: " + GSTown.GetName(this.build_edge.town_a) + "(" + this.build_edge.town_a + ") -> " + GSTown.GetName(this.build_edge.town_b) + "(" + this.build_edge.town_b + ") " +
+                 "(" + this.build_pathfind_iterations + " iterations)", Log.LVL_DEBUG);
         return PathfindResult.FAILED;
     }
     
@@ -1532,7 +1532,7 @@ function RoadNetwork::StartUpgradePathfinding(edge) {
     // Update edge state
     edge.upgrade_state = EdgeBuildState.PATHFINDING;
     
-    Log.Info("Started upgrade pathfinding: " + edge.town_a + " -> " + edge.town_b, Log.LVL_DEBUG);
+    Log.Info("Started upgrade pathfinding: " + GSTown.GetName(edge.town_a) + "(" + edge.town_a + ") -> " + GSTown.GetName(edge.town_b) + "(" + edge.town_b + ")", Log.LVL_DEBUG);
 }
 
 /* Continue upgrade pathfinding - returns PathfindResult */
@@ -1551,19 +1551,19 @@ function RoadNetwork::ContinueUpgradePathfinding() {
     if (path != null) {
         // Path found!
         this.upgrade_path = path;
-        Log.Info("Upgrade path found: " + this.upgrade_edge.town_a + " -> " + this.upgrade_edge.town_b + 
-                 " (" + this.upgrade_pathfind_iterations + " iterations)", Log.LVL_DEBUG);
+        Log.Info("Upgrade path found: " + GSTown.GetName(this.upgrade_edge.town_a) + "(" + this.upgrade_edge.town_a + ") -> " + GSTown.GetName(this.upgrade_edge.town_b) + "(" + this.upgrade_edge.town_b + ") " +
+                 "(" + this.upgrade_pathfind_iterations + " iterations)", Log.LVL_DEBUG);
         return PathfindResult.FOUND;
     }
     
     // Check for errors
     if (error == RoadPathFinder.PATH_FIND_FAILED_NO_PATH) {
-        Log.Info("No upgrade path: " + this.upgrade_edge.town_a + " -> " + this.upgrade_edge.town_b, Log.LVL_DEBUG);
+        Log.Info("No upgrade path: " + GSTown.GetName(this.upgrade_edge.town_a) + "(" + this.upgrade_edge.town_a + ") -> " + GSTown.GetName(this.upgrade_edge.town_b) + "(" + this.upgrade_edge.town_b + ")", Log.LVL_DEBUG);
         return PathfindResult.FAILED;
     }
     
     if (error == RoadPathFinder.PATH_FIND_FAILED_TIME_OUT) {
-        Log.Info("Upgrade pathfind timeout: " + this.upgrade_edge.town_a + " -> " + this.upgrade_edge.town_b, Log.LVL_DEBUG);
+        Log.Info("Upgrade pathfind timeout: " + GSTown.GetName(this.upgrade_edge.town_a) + "(" + this.upgrade_edge.town_a + ") -> " + GSTown.GetName(this.upgrade_edge.town_b) + "(" + this.upgrade_edge.town_b + ")", Log.LVL_DEBUG);
         return PathfindResult.FAILED;
     }
     

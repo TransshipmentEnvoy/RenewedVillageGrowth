@@ -21,6 +21,7 @@ require("roadbuilder/roadbuilder.nut");
 
 // Road network (depends on RoadPathFinder)
 require("road_network.nut");
+require("road_network_local.nut");
 
 // Import ToyLib
 // import("Library.GSToyLib", "GSToyLib", 2);
@@ -71,9 +72,11 @@ class MainClass extends GSController
     generation_cargo = null;
     tech_advance = null;
     road_network = null;
+    road_network_local = null;
 
     pending_tech_advance_data = null;
     pending_road_network_data = null;
+    pending_road_network_local_data = null;
 
     constructor() {
         this.companies = [];
@@ -96,9 +99,11 @@ class MainClass extends GSController
         this.generation_cargo = null;
         this.tech_advance = null;
         this.road_network = null;
+        this.road_network_local = null;
 
         this.pending_tech_advance_data = null;
         this.pending_road_network_data = null;
+        this.pending_road_network_local_data = null;
     }
 }
 
@@ -159,6 +164,22 @@ function MainClass::Start()
         if (this.pending_road_network_data != null) {
             this.road_network.Load(this.pending_road_network_data);
             this.pending_road_network_data = null;
+        }
+    }
+
+    local control_road_network_local = GSController.GetSetting("road_network_local");
+    if (control_road_network_local) {
+        Log.Info("Extended: Local Road Network Building", Log.LVL_INFO);
+        local shared_road_type = null;
+        if (this.road_network != null) {
+            shared_road_type = this.road_network.current_road_type;
+        }
+
+        this.road_network_local = RoadNetworkLocal(this.towns, this.road_network, shared_road_type);
+
+        if (this.pending_road_network_local_data != null) {
+            this.road_network_local.Load(this.pending_road_network_local_data);
+            this.pending_road_network_local_data = null;
         }
     }
     GSGame.Unpause();
@@ -236,6 +257,9 @@ function MainClass::Start()
         }
         if (this.road_network != null) {
             road_network.Manage();
+        }
+        if (this.road_network_local != null) {
+            road_network_local.Manage();
         }
     }
 }
@@ -327,6 +351,16 @@ function MainClass::HandleEvents()
                 if (this.road_network != null) {
                     this.road_network.OnTownFounded(town_id);
                 }
+                if (this.road_network_local != null) {
+                    this.road_network_local.OnTownFounded(town_id);
+                }
+            }
+            break;
+
+        case GSEvent.ET_INDUSTRY_OPEN:
+            event = GSEventIndustryOpen.Convert(event);
+            if (this.road_network_local != null) {
+                this.road_network_local.OnIndustryOpen(event.GetIndustryID());
             }
             break;
 
@@ -495,6 +529,10 @@ function MainClass::Save()
         if (this.road_network != null) {
             save_table.road_network_data <- this.road_network.Save();
         }
+
+        if (this.road_network_local != null) {
+            save_table.road_network_local_data <- this.road_network_local.Save();
+        }
     }
 
     return save_table;
@@ -528,6 +566,10 @@ function MainClass::Load(version, saved_data)
         // Load road network data later in Start() after RoadNetwork is constructed
         if (saved_data.rawin("road_network_data")) {
             this.pending_road_network_data = saved_data.road_network_data;
+        }
+
+        if (saved_data.rawin("road_network_local_data")) {
+            this.pending_road_network_local_data = saved_data.road_network_local_data;
         }
     }
     else {
