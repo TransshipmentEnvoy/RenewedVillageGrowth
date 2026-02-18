@@ -180,6 +180,7 @@ function RoadNetworkLocal::GetIndustryGoalTiles(industry_id) {
     local queue = [industry_tile];
     local visited = {};
     visited[industry_tile] <- true;
+    // GSSign.BuildSign(industry_tile, "x");
     
     while (queue.len() > 0) {
         local tile = queue.remove(0);
@@ -194,11 +195,43 @@ function RoadNetworkLocal::GetIndustryGoalTiles(industry_id) {
                 if (!GSMap.IsValidTile(adjacent)) continue;
                 if (visited.rawin(adjacent)) continue;
                 visited[adjacent] <- true;
+                // GSSign.BuildSign(adjacent, "x");
                 queue.append(adjacent);
             }
         }
     }
     
+    // If industry_tile itself is not part of the industry footprint
+    // (GSIndustry.GetLocation() can return an empty/buildable tile adjacent to the industry),
+    // check if it qualifies as a goal tile directly.
+    if (!industry_tiles.rawin(industry_tile) && GSMap.IsValidTile(industry_tile)) {
+        if (!GSTile.IsWaterTile(industry_tile) &&
+            GSTile.GetOwner(industry_tile) == GSCompany.COMPANY_INVALID) {
+            if (GSRoad.IsRoadTile(industry_tile)) {
+                goal_tiles.append(industry_tile);
+                // GSSign.BuildSign(industry_tile, "g");
+            } else if (GSTile.IsBuildable(industry_tile)) {
+                local test_mode = GSTestMode();
+                local can_build = false;
+                if (this.current_road_type != null) {
+                    GSRoad.SetCurrentRoadType(this.current_road_type);
+                }
+                foreach (test_offset in offsets) {
+                    local test_adjacent = industry_tile + test_offset;
+                    if (!GSMap.IsValidTile(test_adjacent)) continue;
+                    if (GSRoad.BuildRoad(industry_tile, test_adjacent)) {
+                        can_build = true;
+                        break;
+                    }
+                }
+                if (can_build) {
+                    goal_tiles.append(industry_tile);
+                    // GSSign.BuildSign(industry_tile, "g");
+                }
+            }
+        }
+    }
+
     // Now find tiles adjacent to industry that are valid road destinations
     foreach (ind_tile, _ in industry_tiles) {
         foreach (offset in offsets) {
@@ -232,6 +265,7 @@ function RoadNetworkLocal::GetIndustryGoalTiles(industry_id) {
             // Accept tiles that already have roads
             if (GSRoad.IsRoadTile(adjacent)) {
                 goal_tiles.append(adjacent);
+                // GSSign.BuildSign(adjacent, "g");
                 continue;
             }
             
@@ -261,6 +295,7 @@ function RoadNetworkLocal::GetIndustryGoalTiles(industry_id) {
                 
                 if (can_build) {
                     goal_tiles.append(adjacent);
+                    // GSSign.BuildSign(adjacent, "g");
                 }
             }
         }
