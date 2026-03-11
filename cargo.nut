@@ -59,6 +59,7 @@ enum Economies
     XIS__THE_LOT, // 0.6
     AXIS__STEELTOWN, // 2.2.0
     AXIS__TROPICAL_PARADISE, // 2.2.0
+    AXIS__EXTREME_CLASSIC, // 2.3.1
     OTIS, // 05
     IOTC, // 0.1.4
     LUMBERJACK, // 0.1.0
@@ -263,6 +264,14 @@ function GetEconomyCargoList(economy, cargo_list) {
                 "PHAC","IRON","FICR","PLAS","QLME","RAMT","RCYC","RUBR","SALT","SAND",
                 "SCMT","SLAG","SASH","STEL","STSE","SGCN","SUGR","SULP","SUAC","TEXT",
                 "WDPR","TYRE","VPTS","VEHI"];
+    case (Economies.AXIS__EXTREME_CLASSIC): // AXIS 2.3.1 Extreme Classic
+        return ["PASS","ACID","MAIL","BEER","ALUM","GOOD","AORE","BIOM","BDMT","CMNT",
+                "RFPR","FOOD","CHLO","CLAY","COAL","CTAR","COKE","COPR","CORE","EOIL",
+                "POWR","ENSP","BOOM","FMSP","FERT","FISH","FRUT","GLAS","GRAI","IORE",
+                "LIME","LVST","WOOD","MPAR","MILK","NITR","OIL_","OLSD","MNSP","COAT",
+                "PAPR","PETR","IRON","FICR","PLAS","PORE","QLME","RAMT","RCYC","RUBR",
+                "SALT","SAND","SCMT","SLAG","SASH","STEL","SGBT","SULP","TEXT","TYRE",
+                "WDPR","VPTS","VEHI","ZINC"];
     case(Economies.OTIS): // OTIS 05
         local list = ["PASS","COAL","MAIL","OIL_","LIME","GOOD","GRAI","WOOD","IORE","STEL",
                       "MILK","FOOD","PAPR","FISH","WOOL","CLAY","SAND","WDPR","PCL_","GRVL",
@@ -992,6 +1001,19 @@ function DefineCargosBySettings(economy)
                 ::CargoPermille <- [60, 25, 25, 15, 10];
                 ::CargoDecay <- [0.4, 0.2, 0.2, 0.1, 0.1];
             }
+            break;
+        case(Economies.AXIS__EXTREME_CLASSIC): // AXIS 2.3.1: Extreme Classic
+            ::CargoLimiter <- [0,2];
+            ::CargoCat <- [[0,2],
+                       [25,26,28,31,34,56],
+                       [6,7,13,14,18,29,30,32,35,36,37,43,45,47,48,49,50,51,52,54],
+                       [1,4,9,10,12,15,16,17,21,22,23,24,27,33,39,40,42,44,46,53,55,57,59,60,63],
+                       [3,5,8,11,19,20,38,41,58,61,62]];
+            ::CargoCatList <- [CatLabels.PUBLIC_SERVICES,CatLabels.RAW_FOOD,CatLabels.RAW_MATERIALS,
+                       CatLabels.PROCESSED_MATERIALS,CatLabels.FINAL_PRODUCTS];
+            ::CargoMinPopDemand <- [0,500,1000,4000,8000];
+            ::CargoPermille <- [60,25,25,15,10];
+            ::CargoDecay <- [0.4,0.2,0.2,0.1,0.1];
             break;
         case(Economies.OTIS): // OTIS 03
             ::CargoLimiter <- [0,2];
