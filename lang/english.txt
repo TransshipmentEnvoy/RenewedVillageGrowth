@@ -55,6 +55,18 @@ STR_SB_WELCOME_STATISTICS           :Company providing the majority of cargo to 
 STR_SB_WELCOME_ETERNAL_LOVE         :{SILVER}Eternal Love{BLACK} changes {ORANGE}local authority rating{BLACK} of each town once per month to at least {SILVER}{STRING}{BLACK}.
 STR_SB_WELCOME_END                  :Have fun!
 
+##### HIGHWAY TOLL #####
+STR_SB_TOLL_TITLE          :Highway Toll
+STR_SB_TOLL_DESC           :{SILVER}Highway Toll{BLACK} charges road vehicles a {ORANGE}daily fee{BLACK} based on the road they are travelling on and the cargo they carry. Fee = (base + rate x cargo load) / 100. All setting values are in {ORANGE}1/100 £{BLACK}; accumulated fees are divided by 100 before settlement.
+STR_SB_TOLL_FEE_PUBLIC     :{ORANGE}Public / town-owned road{BLACK}: base {SILVER}{NUM}{BLACK} + {SILVER}{NUM}{BLACK}/unit cargo per vehicle per day. The fee is {RED}removed from the economy{BLACK} (no recipient).
+STR_SB_TOLL_FEE_COMPANY    :{ORANGE}Another company's road{BLACK}: base {SILVER}{NUM}{BLACK} + {SILVER}{NUM}{BLACK}/unit cargo per vehicle per day. The fee is {GREEN}transferred to the road owner{BLACK}.
+STR_SB_TOLL_STATS_HEADER    :  {SILVER}--- Highway Toll Activity (since last load) ---
+STR_SB_TOLL_STATS_SUMMARY   :{ORANGE}Total:{BLACK} paid {RED}{NUM}{BLACK} (base {NUM} + cargo {NUM}) / received {GREEN}{NUM}{BLACK} (base {NUM} + cargo {NUM})
+STR_SB_TOLL_STATS_ROW_BOTH  :  {RAW_STRING}: {RED}-{NUM}{BLACK} (base {NUM} + cargo {NUM}) / {GREEN}+{NUM}{BLACK} (base {NUM} + cargo {NUM})
+STR_SB_TOLL_STATS_ROW_OUT   :  {RAW_STRING}: {RED}-{NUM}{BLACK} (base {NUM} + cargo {NUM})
+STR_SB_TOLL_STATS_ROW_IN    :  {RAW_STRING}: {GREEN}+{NUM}{BLACK} (base {NUM} + cargo {NUM})
+STR_SB_TOLL_STATS_ROW_PUBLIC:  {SILVER}Public / town roads: {RED}-{NUM}{BLACK} (base {NUM} + cargo {NUM})
+
 ##### CUSTOM STORY BOOK #####
 STR_SB_CUSTOM_WELCOME       :Please find the server rules in the {ORANGE}{STRING} story book page{BLACK}.
 STR_SB_CUSTOM_TITLE         :Server rules

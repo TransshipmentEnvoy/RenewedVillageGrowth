@@ -22,6 +22,7 @@ require("roadbuilder/roadbuilder.nut");
 // Road network (depends on RoadPathFinder)
 require("road_network.nut");
 require("road_network_local.nut");
+require("highway_toll.nut");
 
 // Import ToyLib
 // import("Library.GSToyLib", "GSToyLib", 2);
@@ -73,10 +74,12 @@ class MainClass extends GSController
     tech_advance = null;
     road_network = null;
     road_network_local = null;
+    highway_toll = null;
 
     pending_tech_advance_data = null;
     pending_road_network_data = null;
     pending_road_network_local_data = null;
+    pending_highway_toll_data = null;
 
     constructor() {
         this.companies = [];
@@ -100,10 +103,12 @@ class MainClass extends GSController
         this.tech_advance = null;
         this.road_network = null;
         this.road_network_local = null;
+        this.highway_toll = null;
 
         this.pending_tech_advance_data = null;
         this.pending_road_network_data = null;
         this.pending_road_network_local_data = null;
+        this.pending_highway_toll_data = null;
     }
 }
 
@@ -182,6 +187,17 @@ function MainClass::Start()
             this.pending_road_network_local_data = null;
         }
     }
+    // Extended: Highway Toll
+    local control_highway_toll = GSController.GetSetting("highway_toll_enable");
+    if (control_highway_toll) {
+        Log.Info("Extended: Highway Toll", Log.LVL_INFO);
+        this.highway_toll = HighwayToll(this.toy_lib);
+        if (this.pending_highway_toll_data != null) {
+            this.highway_toll.Load(this.pending_highway_toll_data);
+            this.pending_highway_toll_data = null;
+        }
+    }
+
     GSGame.Unpause();
 
     local setup_duration = GSController.GetTick() - start_tick;
@@ -194,7 +210,7 @@ function MainClass::Start()
 
     // Create and fill StoryBook. This can't be done before OTTD is ready.
     this.story_editor = StoryEditor();
-    this.story_editor.CreateStoryBook(this.companies, this.towns.len(), init_error, this.tech_advance);
+    this.story_editor.CreateStoryBook(this.companies, this.towns.len(), init_error, this.tech_advance, this.highway_toll);
 
     if (!this.gs_init_done) {
         GSLog.Error("Game initialisation failed. This script is now exiting!");
@@ -212,6 +228,13 @@ function MainClass::Start()
         Log.Info("Initializing technology pages for all companies...", Log.LVL_INFO);
         foreach (company in this.companies) {
             this.story_editor.UpdateTechPage(company, this.tech_advance);
+        }
+    }
+
+    // Initialize toll pages if highway_toll is enabled
+    if (this.highway_toll != null && init_error == InitError.NONE) {
+        foreach (company in this.companies) {
+            this.story_editor.UpdateTollPage(company, this.highway_toll);
         }
     }
 
@@ -260,6 +283,9 @@ function MainClass::Start()
         }
         if (this.road_network_local != null) {
             road_network_local.Manage();
+        }
+        if (this.highway_toll != null) {
+            highway_toll.Manage(this.story_editor, this.companies);
         }
     }
 }
@@ -533,6 +559,11 @@ function MainClass::Save()
         if (this.road_network_local != null) {
             save_table.road_network_local_data <- this.road_network_local.Save();
         }
+
+        // Save highway toll stats
+        if (this.highway_toll != null) {
+            save_table.highway_toll_data <- this.highway_toll.Save();
+        }
     }
 
     return save_table;
@@ -570,6 +601,11 @@ function MainClass::Load(version, saved_data)
 
         if (saved_data.rawin("road_network_local_data")) {
             this.pending_road_network_local_data = saved_data.road_network_local_data;
+        }
+
+        // Load highway toll stats later in Start() after HighwayToll is constructed
+        if (saved_data.rawin("highway_toll_data")) {
+            this.pending_highway_toll_data = saved_data.highway_toll_data;
         }
     }
     else {
@@ -611,11 +647,15 @@ function MainClass::UpdateCompanyList()
         this.companies.append(company);
 
         if (this.story_editor != null) {
-            this.story_editor.CreateNewCompanyStoryBook(company, this.tech_advance);
+            this.story_editor.CreateNewCompanyStoryBook(company, this.tech_advance, this.highway_toll);
             
             // Update tech page for new company
             if (this.tech_advance != null) {
                 this.story_editor.UpdateTechPage(company, this.tech_advance);
+            }
+            // Update toll page for new company
+            if (this.highway_toll != null) {
+                this.story_editor.UpdateTollPage(company, this.highway_toll);
             }
         }
     }

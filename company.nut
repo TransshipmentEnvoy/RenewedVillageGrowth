@@ -17,8 +17,10 @@ class Company
     global_goal = null;     // global goal showing achieved points in the goal gui
     sp_welcome = null;      // story page welcome
     sp_tech = null;         // story page for technology tree
+    sp_toll = null;         // story page for highway toll
 
     tech_ui_state = null;   // transient: persistent element ids + paging/filter state
+    toll_ui_state = null;   // transient: toll story page element ids
 
     is_exempted = null;     // whether company requested exemption from GSToyLib
 

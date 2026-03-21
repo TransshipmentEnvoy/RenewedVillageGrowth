@@ -5,6 +5,12 @@ class StoryEditor
     limit_min_transport = null;
     limiter_delay = null;
 
+    toll_fee_no_owner = null;
+    toll_fee_company_road = null;
+    toll_cargo_rate_no_owner = null;
+    toll_cargo_rate_company_road = null;
+    highway_toll = null;
+
     sp_cargo = null;
     sp_custom = null;
     sp_warning = null;
@@ -14,6 +20,10 @@ class StoryEditor
         this.eternal_love = GSController.GetSetting("eternal_love");
         this.limit_min_transport = GSController.GetSetting("limit_min_transport");
         this.limiter_delay = GSController.GetSetting("limiter_delay");
+        this.toll_fee_no_owner = GSController.GetSetting("toll_fee_no_owner");
+        this.toll_fee_company_road = GSController.GetSetting("toll_fee_company_road");
+        this.toll_cargo_rate_no_owner = GSController.GetSetting("toll_cargo_rate_no_owner");
+        this.toll_cargo_rate_company_road = GSController.GetSetting("toll_cargo_rate_company_road");
     }
 }
 
@@ -42,6 +52,35 @@ function StoryEditor::CheckParameters(companies)
             this.limiter_delay = limiter_delay;
 
             this.WelcomePage(company.sp_welcome);
+        }
+    }
+
+    // highway toll
+    local toll_fee_no_owner = GSController.GetSetting("toll_fee_no_owner");
+    local toll_fee_company_road = GSController.GetSetting("toll_fee_company_road");
+    local toll_cargo_rate_no_owner = GSController.GetSetting("toll_cargo_rate_no_owner");
+    local toll_cargo_rate_company_road = GSController.GetSetting("toll_cargo_rate_company_road");
+    if (this.toll_fee_no_owner != toll_fee_no_owner
+            || this.toll_fee_company_road != toll_fee_company_road
+            || this.toll_cargo_rate_no_owner != toll_cargo_rate_no_owner
+            || this.toll_cargo_rate_company_road != toll_cargo_rate_company_road) {
+        this.toll_fee_no_owner = toll_fee_no_owner;
+        this.toll_fee_company_road = toll_fee_company_road;
+        this.toll_cargo_rate_no_owner = toll_cargo_rate_no_owner;
+        this.toll_cargo_rate_company_road = toll_cargo_rate_company_road;
+        foreach (company in companies) {
+            if (company.sp_toll == null || !GSStoryPage.IsValidStoryPage(company.sp_toll)) continue;
+            local ui = company.toll_ui_state;
+            if (ui == null) {
+                // No stored element IDs yet (after save/load): full rebuild
+                local sp_toll_elements = GSStoryPageElementList(company.sp_toll);
+                foreach (element, _ in sp_toll_elements) GSStoryPage.RemoveElement(element);
+                this.FillTollPage(company);
+            } else {
+                // Update fee elements in-place only
+                GSStoryPage.UpdateElement(ui.elem_fee_public,  0, GSText(GSText.STR_SB_TOLL_FEE_PUBLIC,  toll_fee_no_owner, toll_cargo_rate_no_owner));
+                GSStoryPage.UpdateElement(ui.elem_fee_company, 0, GSText(GSText.STR_SB_TOLL_FEE_COMPANY, toll_fee_company_road, toll_cargo_rate_company_road));
+            }
         }
     }
 }
@@ -73,6 +112,119 @@ function StoryEditor::WelcomePage(sp_welcome)
     }
 
     GSStoryPage.NewElement(sp_welcome, GSStoryPage.SPET_TEXT, 0, GSText(GSText.STR_SB_WELCOME_END));
+}
+
+/* Create or update the highway toll story page for a company */
+function StoryEditor::CreateTollPage(company, highway_toll)
+{
+    if (highway_toll == null) return;
+    if (company.sp_toll == null || !GSStoryPage.IsValidStoryPage(company.sp_toll)) {
+        company.sp_toll = this.NewStoryPage(company.id, GSText(GSText.STR_SB_TOLL_TITLE));
+    }
+    this.UpdateTollPage(company, highway_toll);
+}
+
+function StoryEditor::UpdateTollPage(company, highway_toll)
+{
+    if (highway_toll == null) return;
+    if (company.sp_toll == null || !GSStoryPage.IsValidStoryPage(company.sp_toll)) return;
+    this.highway_toll = highway_toll;
+
+    local ui = company.toll_ui_state;
+    if (ui == null) {
+        // No stored element IDs yet (first run or after a save/load): full rebuild
+        local elements = GSStoryPageElementList(company.sp_toll);
+        foreach (element, _ in elements) GSStoryPage.RemoveElement(element);
+        this.FillTollPage(company);
+        return;
+    }
+
+    // Update the two fee elements in-place — no flicker, no reorder
+    GSStoryPage.UpdateElement(ui.elem_fee_public, 0, GSText(GSText.STR_SB_TOLL_FEE_PUBLIC, this.toll_fee_no_owner, this.toll_cargo_rate_no_owner));
+    GSStoryPage.UpdateElement(ui.elem_fee_company, 0, GSText(GSText.STR_SB_TOLL_FEE_COMPANY, this.toll_fee_company_road, this.toll_cargo_rate_company_road));
+
+    // Update fixed stats slots in-place — no element creation or removal
+    this._FillTollStats(company.id, ui);
+}
+
+/* Full (re)build of toll page content; pre-allocates 18 fixed stats slots */
+function StoryEditor::FillTollPage(company)
+{
+    local sp_toll = company.sp_toll;
+    local ui = {};
+    GSStoryPage.NewElement(sp_toll, GSStoryPage.SPET_TEXT, 0, GSText(GSText.STR_SB_TOLL_DESC));
+    ui.elem_fee_public  <- GSStoryPage.NewElement(sp_toll, GSStoryPage.SPET_TEXT, 0, GSText(GSText.STR_SB_TOLL_FEE_PUBLIC, this.toll_fee_no_owner, this.toll_cargo_rate_no_owner));
+    ui.elem_fee_company <- GSStoryPage.NewElement(sp_toll, GSStoryPage.SPET_TEXT, 0, GSText(GSText.STR_SB_TOLL_FEE_COMPANY, this.toll_fee_company_road, this.toll_cargo_rate_company_road));
+    GSStoryPage.NewElement(sp_toll, GSStoryPage.SPET_TEXT, 0, GSText(GSText.STR_SB_TOLL_STATS_HEADER));
+    // 18 fixed stats slots: slot 0 = summary, slot 1 = separator, slots 2-17 = entity rows
+    // (slot 2 = public roads, slots 3-17 = company IDs 0-14)
+    ui.stats_summary <- GSStoryPage.NewElement(sp_toll, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+    ui.stats_sep     <- GSStoryPage.NewElement(sp_toll, GSStoryPage.SPET_TEXT, 0, GSText(GSText.STR_SEPARATOR));
+    ui.stats_rows    <- array(16);
+    for (local i = 0; i < 16; i++) {
+        ui.stats_rows[i] = GSStoryPage.NewElement(sp_toll, GSStoryPage.SPET_TEXT, 0, this.EmptyText());
+    }
+    company.toll_ui_state = ui;
+    this._FillTollStats(company.id, ui);
+}
+
+/* Update the 18 fixed stats slots in-place; never creates or removes elements */
+function StoryEditor::_FillTollStats(company_id, ui)
+{
+    local cs = (this.highway_toll != null && this.highway_toll.stats.rawin(company_id))
+               ? this.highway_toll.stats[company_id] : null;
+
+    // Slot 0: summary (total paid / total received, with base/cargo breakdown)
+    local total_paid_base  = 0;
+    local total_paid_cargo = 0;
+    local total_recv_base  = 0;
+    local total_recv_cargo = 0;
+    if (cs != null) {
+        total_paid_base  = cs.paid_public_base;
+        total_paid_cargo = cs.paid_public_cargo;
+        foreach (_, amount in cs.paid_to_base)        total_paid_base  += amount;
+        foreach (_, amount in cs.paid_to_cargo)       total_paid_cargo += amount;
+        foreach (_, amount in cs.received_from_base)  total_recv_base  += amount;
+        foreach (_, amount in cs.received_from_cargo) total_recv_cargo += amount;
+    }
+    local d = ::TOLL_PRICE_DIVISOR;
+    local total_paid = total_paid_base + total_paid_cargo;
+    local total_recv = total_recv_base + total_recv_cargo;
+    GSStoryPage.UpdateElement(ui.stats_summary, 0, GSText(GSText.STR_SB_TOLL_STATS_SUMMARY, total_paid / d, total_paid_base / d, total_paid_cargo / d, total_recv / d, total_recv_base / d, total_recv_cargo / d));
+
+    // Slot 1: separator — written once at creation, never updated here
+
+    // stats_rows[0]: public / town roads
+    local paid_pub_base  = (cs != null) ? cs.paid_public_base  : 0;
+    local paid_pub_cargo = (cs != null) ? cs.paid_public_cargo : 0;
+    local paid_pub_total = paid_pub_base + paid_pub_cargo;
+    if (paid_pub_total > 0) {
+        GSStoryPage.UpdateElement(ui.stats_rows[0], 0, GSText(GSText.STR_SB_TOLL_STATS_ROW_PUBLIC, paid_pub_total / d, paid_pub_base / d, paid_pub_cargo / d));
+    } else {
+        GSStoryPage.UpdateElement(ui.stats_rows[0], 0, this.EmptyText());
+    }
+
+    // stats_rows[1..15]: company IDs 0..14
+    for (local cid = 0; cid < 15; cid++) {
+        local pt_base  = (cs != null && cs.paid_to_base.rawin(cid))        ? cs.paid_to_base[cid]        : 0;
+        local pt_cargo = (cs != null && cs.paid_to_cargo.rawin(cid))       ? cs.paid_to_cargo[cid]       : 0;
+        local rf_base  = (cs != null && cs.received_from_base.rawin(cid))  ? cs.received_from_base[cid]  : 0;
+        local rf_cargo = (cs != null && cs.received_from_cargo.rawin(cid)) ? cs.received_from_cargo[cid] : 0;
+        local paid_to   = pt_base + pt_cargo;
+        local recv_from = rf_base + rf_cargo;
+        local valid = GSCompany.ResolveCompanyID(cid) != GSCompany.COMPANY_INVALID;
+        local text;
+        if (valid && paid_to > 0 && recv_from > 0) {
+            text = GSText(GSText.STR_SB_TOLL_STATS_ROW_BOTH, GSCompany.GetName(cid), paid_to / d, pt_base / d, pt_cargo / d, recv_from / d, rf_base / d, rf_cargo / d);
+        } else if (valid && paid_to > 0) {
+            text = GSText(GSText.STR_SB_TOLL_STATS_ROW_OUT, GSCompany.GetName(cid), paid_to / d, pt_base / d, pt_cargo / d);
+        } else if (valid && recv_from > 0) {
+            text = GSText(GSText.STR_SB_TOLL_STATS_ROW_IN, GSCompany.GetName(cid), recv_from / d, rf_base / d, rf_cargo / d);
+        } else {
+            text = this.EmptyText();
+        }
+        GSStoryPage.UpdateElement(ui.stats_rows[1 + cid], 0, text);
+    }
 }
 
 /* Create a page showing informations about cargo categories. */
@@ -168,7 +320,7 @@ function StoryEditor::CustomPage(sp_custom)
  * called only when (re)initializing all data, because the existing
  * storybook is stored by OTTD.
  */
-function StoryEditor::CreateStoryBook(companies, num_towns, init_error, tech_advance)
+function StoryEditor::CreateStoryBook(companies, num_towns, init_error, tech_advance, highway_toll)
 {
     // Remove any eventual previous existent storypage
     local sb_list = GSStoryPageList(0);
@@ -194,6 +346,10 @@ function StoryEditor::CreateStoryBook(companies, num_towns, init_error, tech_adv
             // Create technology tree page (only if tech_advance is enabled)
             if (tech_advance != null) {
                 company.sp_tech = this.NewStoryPage(company.id, GSText(GSText.STR_TECH_TREE_TITLE));
+            }
+            // Create highway toll page shell (only if toll is enabled)
+            if (highway_toll != null) {
+                company.sp_toll = this.NewStoryPage(company.id, GSText(GSText.STR_SB_TOLL_TITLE));
             }
         }
     }
@@ -225,7 +381,7 @@ function StoryEditor::CreateStoryBook(companies, num_towns, init_error, tech_adv
     }
 }
 
-function StoryEditor::CreateNewCompanyStoryBook(company, tech_advance)
+function StoryEditor::CreateNewCompanyStoryBook(company, tech_advance, highway_toll)
 {
     // Create welcome page
     company.sp_welcome = this.NewStoryPage(company.id, GSText(GSText.STR_SB_WELCOME_TITLE, SELF_MAJORVERSION, SELF_MINORVERSION));
@@ -235,6 +391,10 @@ function StoryEditor::CreateNewCompanyStoryBook(company, tech_advance)
     // Create technology tree page (only if tech_advance is enabled)
     if (tech_advance != null) {
         company.sp_tech = this.NewStoryPage(company.id, GSText(GSText.STR_TECH_TREE_TITLE));
+    }
+    // Create highway toll page shell (only if toll is enabled)
+    if (highway_toll != null) {
+        company.sp_toll = this.NewStoryPage(company.id, GSText(GSText.STR_SB_TOLL_TITLE));
     }
 }
 

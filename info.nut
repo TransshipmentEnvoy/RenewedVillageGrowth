@@ -351,6 +351,51 @@ class MainClass extends GSInfo
             custom_value = 10,
             flags = CONFIG_INGAME, min_value = 1, max_value = 50, step_size = 1});
 
+        AddSetting({
+            name = "highway_toll_enable",
+            description = "Highway Toll: Enable road vehicle toll system",
+            easy_value = 0,
+            medium_value = 1,
+            hard_value = 1,
+            custom_value = 1,
+            flags = CONFIG_BOOLEAN });
+
+        AddSetting({
+            name = "toll_fee_no_owner",
+            description = "Highway Toll: Base daily fee per vehicle on public/town roads (1/100 £)",
+            easy_value = 0,
+            medium_value = 5,
+            hard_value = 12,
+            custom_value = 12,
+            flags = CONFIG_INGAME, min_value = 0, max_value = 1000, step_size = 1});
+
+        AddSetting({
+            name = "toll_fee_company_road",
+            description = "Highway Toll: Base daily fee per vehicle on another company's road (1/100 £)",
+            easy_value = 5,
+            medium_value = 25,
+            hard_value = 50,
+            custom_value = 50,
+            flags = CONFIG_INGAME, min_value = 0, max_value = 1000, step_size = 1});
+
+        AddSetting({
+            name = "toll_cargo_rate_no_owner",
+            description = "Highway Toll: Per-unit cargo surcharge on public/town roads (1/100 £/unit)",
+            easy_value = 0,
+            medium_value = 2,
+            hard_value = 4,
+            custom_value = 4,
+            flags = CONFIG_INGAME, min_value = 0, max_value = 100, step_size = 1});
+
+        AddSetting({
+            name = "toll_cargo_rate_company_road",
+            description = "Highway Toll: Per-unit cargo surcharge on another company's road (1/100 £/unit)",
+            easy_value = 0,
+            medium_value = 5,
+            hard_value = 10,
+            custom_value = 10,
+            flags = CONFIG_INGAME, min_value = 0, max_value = 100, step_size = 1});
+
     }
 }
 
