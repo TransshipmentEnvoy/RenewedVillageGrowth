@@ -298,6 +298,26 @@ class MainClass extends GSInfo
             flags = CONFIG_BOOLEAN });
 
         AddSetting({
+            name = "tech_research_cost_factor",
+            description = "Tech Research Cost Factor (x vehicle price, e.g. 20 = 20x)",
+            easy_value = 20,
+            medium_value = 20,
+            hard_value = 20,
+            custom_value = 20,
+            flags = CONFIG_INGAME,
+            min_value = 1, max_value = 100, step_size = 1 });
+
+        AddSetting({
+            name = "tech_research_duration_divisor",
+            description = "Tech Research Duration Divisor (months = vehicle max age in years / this value)",
+            easy_value = 5,
+            medium_value = 5,
+            hard_value = 5,
+            custom_value = 5,
+            flags = CONFIG_INGAME,
+            min_value = 1, max_value = 20, step_size = 1 });
+
+        AddSetting({
             name = "road_network",
             description = "Road Network Building for Connecting Towns and Industries",
             easy_value = 1,

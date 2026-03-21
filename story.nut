@@ -428,8 +428,7 @@ function StoryEditor::UpdateTechPage(company, tech_advance)
 
     // Header
     local ui = company.tech_ui_state;
-    local cost_k = tech_advance.RESEARCH_COST / 1000;
-    GSStoryPage.UpdateElement(ui.header_id, 0, GSText(GSText.STR_TECH_HEADER, cost_k));
+    GSStoryPage.UpdateElement(ui.header_id, 0, GSText(GSText.STR_TECH_HEADER));
 
     // Company data
     if (!tech_advance.company_unlocks.rawin(company.id)) return;
@@ -492,7 +491,7 @@ function StoryEditor::UpdateTechPage(company, tech_advance)
                 GSText(GSText.STR_TECH_QUEUE_NAV_ITEM, engine_info.name, current_num, queue_len));
 
             // Display progress
-            local progress_percent = 100 - ((item.progress * 100) / tech_advance.RESEARCH_DURATION);
+            local progress_percent = 100 - ((item.progress * 100) / item.total_duration);
             local months_remaining = item.progress;
 
             GSStoryPage.UpdateElement(ui.queue_nav_progress, 0,
@@ -618,8 +617,11 @@ function StoryEditor::UpdateTechPage(company, tech_advance)
                 vtype_name, max_speed, capacity, price, running_cost));
 
         // Update research button (blue/available)
-        GSStoryPage.UpdateElement(ui.candidate_research_btn, ui.candidate_nav_button_refs.research_avai, GSText(GSText.STR_TECH_BUTTON_RESEARCH, cost_k));
         local composite_key = current.name + "|" + current.vehicle_type + "|" + current.intro_date;
+        local research_cost = tech_advance.GetResearchCost(composite_key);
+        local research_duration = tech_advance.GetResearchDuration(composite_key);
+        local cost_k = research_cost / 1000;
+        GSStoryPage.UpdateElement(ui.candidate_research_btn, ui.candidate_nav_button_refs.research_avai, GSText(GSText.STR_TECH_BUTTON_RESEARCH, cost_k, research_duration));
         tech_advance.button_element_map[ui.candidate_research_btn] <- { kind = "research", composite_key = composite_key };
 
         // Update index display (e.g., "1 / 5")

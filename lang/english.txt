@@ -172,7 +172,7 @@ STR_ETERNAL_LOVE_POOR           :poor
 
 ##### TECHNOLOGY TREE #####
 STR_TECH_TREE_TITLE             :Technology Tree
-STR_TECH_HEADER                 :Research new vehicle technologies by paying £{NUM}k per vehicle. Click the Research button to unlock a vehicle type.
+STR_TECH_HEADER                 :Research new vehicle technologies to unlock them. Cost and duration scale with vehicle price and lifespan.
 STR_TECH_EXEMPT_MESSAGE         :Your company is exempt from vehicle restrictions. All vehicles are available without research.
 STR_TECH_RESEARCHING_HEADER     :{ORANGE}Currently Researching:{BLACK}
 STR_TECH_RESEARCHING_ITEM       :  • {RAW_STRING} - {NUM}% complete
@@ -190,7 +190,7 @@ STR_TECH_BUTTON_PREV            :Previous page
 STR_TECH_BUTTON_NEXT            :Next page
 STR_TECH_PAGE_STATUS            :{STRING} - showing {NUM}-{NUM} of {NUM} available
 STR_TECH_ENGINE_ITEM            :  • {RAW_STRING}
-STR_TECH_BUTTON_RESEARCH        :Research (£{NUM}k)
+STR_TECH_BUTTON_RESEARCH        :Research (£{NUM}k, {NUM} {P month months})
 STR_TECH_MORE_AVAILABLE         :  ... and {NUM} more available
 STR_TECH_NO_AVAILABLE           :No new vehicles available for research. Check back later as new technologies are introduced.
 STR_TECH_QUEUE_NAV_HEADER       :Research Queue

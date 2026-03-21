@@ -17,9 +17,10 @@ class TechAdvance {
     current_month = null;         // Current month for monthly updates
     current_year = null;          // Current year for yearly updates
     
-    // Research configuration
-    static RESEARCH_COST = 100000;           // Fixed cost per engine (£100,000)
-    static RESEARCH_DURATION = 6;            // Fixed duration in months
+    // Research configuration - dynamic, based on vehicle price and lifespan
+    static RESEARCH_COST_MIN = 10000;         // Minimum research cost (£10,000)
+    static RESEARCH_DURATION_MIN = 1;         // Minimum duration (months)
+    static RESEARCH_DURATION_MAX = 24;        // Maximum duration (months)
     
     constructor() {
         GSGameSettings.SetValue("vehicle.never_expire_vehicles", 0);
@@ -77,6 +78,34 @@ function TechAdvance::LoadEngineData() {
             }
         }
     }
+}
+
+function TechAdvance::GetResearchCost(composite_key) {
+    // Calculate research cost based on vehicle purchase price
+    if (!this.name_to_ids.rawin(composite_key)) return RESEARCH_COST_MIN;
+    local engine_ids = this.name_to_ids[composite_key];
+    if (engine_ids.len() == 0) return RESEARCH_COST_MIN;
+
+    local engine_id = engine_ids[0];
+    local price = GSEngine.GetPrice(engine_id);
+    local cost = price * GSController.GetSetting("tech_research_cost_factor");
+    if (cost < RESEARCH_COST_MIN) cost = RESEARCH_COST_MIN;
+    return cost;
+}
+
+function TechAdvance::GetResearchDuration(composite_key) {
+    // Calculate research duration based on vehicle lifespan
+    if (!this.name_to_ids.rawin(composite_key)) return RESEARCH_DURATION_MIN;
+    local engine_ids = this.name_to_ids[composite_key];
+    if (engine_ids.len() == 0) return RESEARCH_DURATION_MIN;
+
+    local engine_id = engine_ids[0];
+    local max_age_days = GSEngine.GetMaxAge(engine_id);
+    local max_age_years = max_age_days / 365;
+    local duration = max_age_years / GSController.GetSetting("tech_research_duration_divisor");
+    if (duration < RESEARCH_DURATION_MIN) duration = RESEARCH_DURATION_MIN;
+    if (duration > RESEARCH_DURATION_MAX) duration = RESEARCH_DURATION_MAX;
+    return duration;
 }
 
 function TechAdvance::UpdateCompanyList() {
@@ -305,16 +334,20 @@ function TechAdvance::StartResearch(company_id, composite_key) {
         }
     }
     
+    // Calculate dynamic cost and duration for this engine
+    local research_cost = this.GetResearchCost(composite_key);
+    local research_duration = this.GetResearchDuration(composite_key);
+    
     // Check if company can afford it
     local balance = GSCompany.GetBankBalance(company_id);
-    if (balance < RESEARCH_COST) {
-        Log.Info("TechAdvance: Company " + company_id + " cannot afford research (balance: £" + balance + ")", Log.LVL_INFO);
+    if (balance < research_cost) {
+        Log.Info("TechAdvance: Company " + company_id + " cannot afford research (balance: £" + balance + ", cost: £" + research_cost + ")", Log.LVL_INFO);
         return false;
     }
     
     // Deduct cost using ChangeBankBalance (GameScript deity mode, NOT in company mode)
     // Use GSMap.TILE_INVALID as location (standard for script-initiated expenses)
-    if (!GSCompany.ChangeBankBalance(company_id, -RESEARCH_COST, GSCompany.EXPENSES_OTHER, GSMap.TILE_INVALID)) {
+    if (!GSCompany.ChangeBankBalance(company_id, -research_cost, GSCompany.EXPENSES_OTHER, GSMap.TILE_INVALID)) {
         Log.Warning("TechAdvance: Failed to deduct research cost from company " + company_id);
         return false;
     }
@@ -322,7 +355,8 @@ function TechAdvance::StartResearch(company_id, composite_key) {
     // Add to research queue
     company_data.research_queue.append({
         composite_key = composite_key,
-        progress = RESEARCH_DURATION
+        progress = research_duration,
+        total_duration = research_duration
     });
     
     // Get engine name for logging (use first variant)
@@ -526,7 +560,8 @@ function TechAdvance::Save() {
         foreach (item in company_data.research_queue) {
             save_data.company_unlocks[company_id].research_queue.append({
                 composite_key = item.composite_key,
-                progress = item.progress
+                progress = item.progress,
+                total_duration = item.total_duration
             });
         }
     }
@@ -568,9 +603,12 @@ function TechAdvance::Load(saved_data) {
         // Restore research queue (validate composite_keys exist in current NewGRF)
         foreach (item in company_data.research_queue) {
             if (this.name_to_ids.rawin(item.composite_key)) {
+                // Backward compat: old saves may lack total_duration
+                local td = item.rawin("total_duration") ? item.total_duration : item.progress;
                 this.company_unlocks[company_id].research_queue.append({
                     composite_key = item.composite_key,
-                    progress = item.progress
+                    progress = item.progress,
+                    total_duration = td
                 });
             } else {
                 Log.Warning("TechAdvance: Saved research item not found in current NewGRF: " + item.composite_key);
